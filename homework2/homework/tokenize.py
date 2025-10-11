@@ -38,12 +38,12 @@ def tokenize(tokenizer: Path, output: Path, *images_or_dirs: Path):
         image = Image.open(image_path)
         x = torch.tensor(np.array(image), dtype=torch.uint8, device=device)
         #print(f"hello {x.shape}")
-        batched_x = x.unsqueeze(0)
+        #batched_x = x.unsqueeze(0)
         #print(f"Fixed shape:    {batched_x.shape}")
         with torch.inference_mode():
-            batched_x = batched_x.float() / 255.0 - 0.5
-            #x = x.float() / 255.0 - 0.5
-            cmp_image = tk_model.encode_index(batched_x)
+            #batched_x = batched_x.float() / 255.0 - 0.5
+            x = x.float() / 255.0 - 0.5
+            cmp_image = tk_model.encode_index(x)
             compressed_tensors.append(cmp_image.cpu())
 
     # Store the tensor in the lowest number of bits possible

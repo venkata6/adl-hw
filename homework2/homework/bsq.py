@@ -158,6 +158,7 @@ class BSQPatchAutoEncoder(PatchAutoEncoder, Tokenizer):
         # Need to reshape for linear layers: (B, h, w, latent_dim) -> (B*h*w, latent_dim)
         #print(f"ae_features shape: {ae_features.shape}")
         #print(f"Number of dimensions: {len(ae_features.shape)}")
+        #ae_features = ae_features.unsqueeze(0)
         B, h, w, d = ae_features.shape 
         ae_features_flat = ae_features.reshape(-1, d) 
         

@@ -81,8 +81,9 @@ class AutoregressiveModel(torch.nn.Module, Autoregressive):
         x: (B, h, w) - integer tokens
         returns: (B, h, w, n_tokens) - logits for next token prediction
         """
-        #print(f"{x.shape}")
-        B, C, h, w = x.shape
+        #print(f" hello {x.shape}")
+        #B, C, h, w = x.shape
+        B, h, w = x.shape
         seq_len = h * w
         
         # Flatten to sequence: (B, h, w) -> (B, h*w)
