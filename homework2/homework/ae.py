@@ -6,10 +6,15 @@ import torch
 def load() -> torch.nn.Module:
     from pathlib import Path
 
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+
     model_name = "PatchAutoEncoder"
     model_path = Path(__file__).parent / f"{model_name}.pth"
     print(f"Loading {model_name} from {model_path}")
-    return torch.load(model_path, weights_only=False)
+    return torch.load(model_path,map_location=device, weights_only=False)
 
 
 def hwc_to_chw(x: torch.Tensor) -> torch.Tensor:
