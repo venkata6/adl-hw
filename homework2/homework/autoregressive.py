@@ -1,5 +1,4 @@
 import abc
-
 import torch
 
 
@@ -55,10 +54,105 @@ class AutoregressiveModel(torch.nn.Module, Autoregressive):
 
     def __init__(self, d_latent: int = 128, n_tokens: int = 2**10):
         super().__init__()
-        raise NotImplementedError()
+        self.d_latent = d_latent
+        self.n_tokens = n_tokens
+        
+        # Token embedding
+        self.token_embedding = torch.nn.Embedding(n_tokens, d_latent)
+        
+        # Learnable start token embedding (for the first position)
+        self.start_token = torch.nn.Parameter(torch.randn(1, 1, d_latent))
+        
+        # Transformer layers with causal masking
+        encoder_layer = torch.nn.TransformerEncoderLayer(
+            d_model=d_latent,
+            nhead=8,
+            dim_feedforward=d_latent * 4,
+            dropout=0.1,
+            batch_first=True
+        )
+        self.transformer = torch.nn.TransformerEncoder(encoder_layer, num_layers=6)
+        
+        # Output projection to vocabulary
+        self.output_proj = torch.nn.Linear(d_latent, n_tokens)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        raise NotImplementedError()
+        """
+        x: (B, h, w) - integer tokens
+        returns: (B, h, w, n_tokens) - logits for next token prediction
+        """
+        #print(f"{x.shape}")
+        B, C, h, w = x.shape
+        seq_len = h * w
+        
+        # Flatten to sequence: (B, h, w) -> (B, h*w)
+        x_flat = x.reshape(B, seq_len)
+        
+        # Embed tokens: (B, seq_len) -> (B, seq_len, d_latent)
+        x_embed = self.token_embedding(x_flat)
+        
+        # Shift right by prepending start token and removing last token
+        # This ensures position i predicts token i, but only sees tokens < i
+        start_tokens = self.start_token.expand(B, 1, self.d_latent)
+        x_shifted = torch.cat([start_tokens, x_embed[:, :-1, :]], dim=1)
+        
+        # Create causal mask (upper triangular)
+        causal_mask = torch.nn.Transformer.generate_square_subsequent_mask(
+            seq_len, device=x.device
+        )
+        
+        # Apply transformer with causal mask
+        # (B, seq_len, d_latent) -> (B, seq_len, d_latent)
+        transformer_out = self.transformer(x_shifted, mask=causal_mask, is_causal=True)
+        
+        # Project to vocabulary: (B, seq_len, d_latent) -> (B, seq_len, n_tokens)
+        logits = self.output_proj(transformer_out)
+        
+        # Reshape back to image format: (B, seq_len, n_tokens) -> (B, h, w, n_tokens)
+        logits = logits.reshape(B, h, w, self.n_tokens)
+        
+        return logits, {}
 
-    def generate(self, B: int = 1, h: int = 30, w: int = 20, device=None) -> torch.Tensor:  # noqa
-        raise NotImplementedError()
+    def generate(self, B: int = 1, h: int = 30, w: int = 20, device=None) -> torch.Tensor:
+        """
+        Generate new images autoregressively.
+        """
+        if device is None:
+            device = next(self.parameters()).device
+        
+        seq_len = h * w
+        
+        # Start with empty sequence, will fill autoregressively
+        generated = torch.zeros(B, seq_len, dtype=torch.long, device=device)
+        
+        # Generate one token at a time
+        for i in range(seq_len):
+            if i == 0:
+                # First token: use start token only
+                start_tokens = self.start_token.expand(B, 1, self.d_latent)
+                causal_mask = torch.nn.Transformer.generate_square_subsequent_mask(
+                    1, device=device
+                )
+                transformer_out = self.transformer(start_tokens, mask=causal_mask, is_causal=True)
+            else:
+                # Subsequent tokens: embed all previous tokens
+                x_embed = self.token_embedding(generated[:, :i])
+                start_tokens = self.start_token.expand(B, 1, self.d_latent)
+                x_shifted = torch.cat([start_tokens, x_embed], dim=1)
+                
+                causal_mask = torch.nn.Transformer.generate_square_subsequent_mask(
+                    i + 1, device=device
+                )
+                transformer_out = self.transformer(x_shifted, mask=causal_mask, is_causal=True)
+            
+            # Get logits for next token
+            logits = self.output_proj(transformer_out[:, -1, :])  # (B, n_tokens)
+            
+            # Sample from distribution
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)  # (B,)
+            
+            generated[:, i] = next_token
+        
+        # Reshape to image format
+        return generated.reshape(B, h, w)

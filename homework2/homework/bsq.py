@@ -46,7 +46,14 @@ class Tokenizer(abc.ABC):
 class BSQ(torch.nn.Module):
     def __init__(self, codebook_bits: int, embedding_dim: int):
         super().__init__()
-        raise NotImplementedError()
+        #raise NotImplementedError()
+        self._codebook_bits = codebook_bits
+        self._embedding_dim = embedding_dim
+        
+        # Linear projection down to codebook_bits dimensions
+        self.down_proj = torch.nn.Linear(embedding_dim, codebook_bits)
+        # Linear projection back up to embedding_dim
+        self.up_proj = torch.nn.Linear(codebook_bits, embedding_dim)
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -55,14 +62,26 @@ class BSQ(torch.nn.Module):
         - L2 normalization
         - differentiable sign
         """
-        raise NotImplementedError()
+        #raise NotImplementedError()
+         # Down-project to codebook_bits dimensions
+        x = self.down_proj(x)
+        
+        # L2 normalization
+        x = torch.nn.functional.normalize(x, p=2, dim=-1)
+        
+        # Differentiable sign (binarize to -1 or 1)
+        x = diff_sign(x)
+        
+        return x
 
     def decode(self, x: torch.Tensor) -> torch.Tensor:
         """
         Implement the BSQ decoder:
         - A linear up-projection into embedding_dim should suffice
         """
-        raise NotImplementedError()
+        #raise NotImplementedError()
+        return self.up_proj(x)
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.decode(self.encode(x))
@@ -96,20 +115,76 @@ class BSQPatchAutoEncoder(PatchAutoEncoder, Tokenizer):
     """
 
     def __init__(self, patch_size: int = 5, latent_dim: int = 128, codebook_bits: int = 10):
-        super().__init__(patch_size=patch_size, latent_dim=latent_dim)
-        raise NotImplementedError()
+        #super().__init__(patch_size=patch_size, latent_dim=latent_dim)
+        #raise NotImplementedError()
+        super().__init__(patch_size=patch_size, latent_dim=latent_dim, bottleneck=latent_dim)
+        
+        # Initialize BSQ quantizer
+        self.bsq = BSQ(codebook_bits=codebook_bits, embedding_dim=latent_dim)
+        self.codebook_bits = codebook_bits
 
     def encode_index(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        #raise NotImplementedError()
+         # Get quantized codes
+        codes = self.encode(x)  # (B, h, w, codebook_bits)
+        
+        # Convert to indices
+        B, h, w, bits = codes.shape
+        codes_flat = codes.reshape(-1, bits)
+        indices = self.bsq._code_to_index(codes_flat)  # (B*h*w,)
+        
+        return indices.reshape(B, h, w)
 
     def decode_index(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        #raise NotImplementedError()
+         # Convert indices to codes
+        B, h, w = x.shape
+        x_flat = x.reshape(-1)
+        codes = self.bsq._index_to_code(x_flat)  # (B*h*w, codebook_bits)
+        codes = codes.reshape(B, h, w, -1)  # (B, h, w, codebook_bits)
+        
+        # Decode to image
+        return self.decode(codes)
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        #raise NotImplementedError()
+         # Get autoencoder embeddings
+        ae_features = super().encode(x)  # (B, h, w, latent_dim)
+        #print(f"Input x shape: {x.shape}")
+        #print(f"ae_features shape: {ae_features.shape}")
+        #print(f"ae_features type: {type(ae_features)}")
+        
+        # Apply BSQ encoding
+        # Need to reshape for linear layers: (B, h, w, latent_dim) -> (B*h*w, latent_dim)
+        #print(f"ae_features shape: {ae_features.shape}")
+        #print(f"Number of dimensions: {len(ae_features.shape)}")
+        B, h, w, d = ae_features.shape 
+        ae_features_flat = ae_features.reshape(-1, d) 
+        
+        # BSQ encode
+        quantized = self.bsq.encode(ae_features_flat)  # (B*h*w, codebook_bits)
+        
+        # Reshape back
+        quantized = quantized.reshape(B, h, w, -1)  # (B, h, w, codebook_bits)
+        
+        return quantized
 
     def decode(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        #raise NotImplementedError()
+         # Reshape for linear layers
+        B, h, w, bits = x.shape
+        x_flat = x.reshape(-1, bits)
+        
+        # BSQ decode
+        ae_features = self.bsq.decode(x_flat)  # (B*h*w, latent_dim)
+        
+        # Reshape back
+        ae_features = ae_features.reshape(B, h, w, -1)  # (B, h, w, latent_dim)
+        
+        # Decode with autoencoder
+        reconstructed = super().decode(ae_features)  # (B, H, W, 3)
+        
+        return reconstructed
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """
@@ -127,4 +202,21 @@ class BSQPatchAutoEncoder(PatchAutoEncoder, Tokenizer):
                 ...
               }
         """
-        raise NotImplementedError()
+        #raise NotImplementedError()
+        """
+        Return the reconstructed image and a dictionary of additional loss terms
+        """
+        # Encode and decode
+        quantized = self.encode(x)
+        reconstructed = self.decode(quantized)
+        
+        # Monitor codebook usage
+        indices = self.encode_index(x)
+        cnt = torch.bincount(indices.flatten(), minlength=2**self.codebook_bits)
+        
+        additional_losses = {
+            "cb0": (cnt == 0).float().mean().detach(),  # Fraction of unused codes
+            "cb2": (cnt <= 2).float().mean().detach(),  # Fraction rarely used
+        }
+        
+        return reconstructed, additional_losses
