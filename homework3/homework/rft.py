@@ -219,7 +219,7 @@ def test_rft_model(ckpt_path: str):
     for q, a in sample_questions:
         print(f"\nQ: {q}")
         print(f"Expected: {a}")
-        generated = llm.generate(q, max_new_tokens=100)
+        generated = llm.generate(q, ) #max_new_tokens=100
         print(f"Generated: {generated}")
 
 
