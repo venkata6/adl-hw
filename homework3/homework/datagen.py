@@ -1,3 +1,7 @@
+"""
+Data generation for RFT using rejection sampling with Chain-of-Thought reasoning.
+"""
+
 import json
 from pathlib import Path
 from typing import List, Tuple, Optional
@@ -19,14 +23,19 @@ class CoTModel:
     def format_cot_prompt(self, question: str) -> str:
         """
         Format question to encourage chain-of-thought reasoning.
-        Uses chat template for better instruction following.
+        Uses chat template with few-shot examples for better performance.
         """
         system_message = (
-            "You are a helpful assistant that solves math problems step by step. "
-            "Show your reasoning, then provide the final answer in <answer>NUMBER</answer> format."
+            "You are a helpful math assistant. Solve problems step-by-step and "
+            "provide your final answer in <answer>NUMBER</answer> format.\n\n"
+            "Examples:\n"
+            "Q: How many grams in 2 kg?\n"
+            "A: 1 kg = 1000 grams. So 2 kg = 2 × 1000 = <answer>2000</answer>\n\n"
+            "Q: Convert 5 meters to centimeters.\n"
+            "A: 1 meter = 100 cm. So 5 meters = 5 × 100 = <answer>500</answer>"
         )
         
-        user_message = f"{question}\n\nLet's solve this step by step:"
+        user_message = f"{question}\n\nSolve step by step and provide answer in <answer>NUMBER</answer> format:"
         
         # Use chat template for better performance
         messages = [
@@ -71,10 +80,7 @@ class CoTModel:
         return self.llm.parse_answer(text)
 
 
-# def generate_dataset(output_json: str, oversample: int = 10, temperature: float = 0.6):
-#     raise NotImplementedError()
-
-def generate_dataset(output_json: str, oversample: int = 10, temperature: float = 0.6):
+def generate_dataset(output_json: str, oversample: int = 20, temperature: float = 0.8):
     """
     Generate RFT training dataset using rejection sampling.
     
@@ -86,8 +92,8 @@ def generate_dataset(output_json: str, oversample: int = 10, temperature: float 
     
     Args:
         output_json: Path to save the dataset JSON file
-        oversample: Number of diverse samples to generate per question (default: 10)
-        temperature: Sampling temperature for diversity (default: 0.6)
+        oversample: Number of diverse samples to generate per question (default: 20)
+        temperature: Sampling temperature for diversity (default: 0.8)
     """
     print("Initializing CoT model...")
     cot_model = CoTModel()
@@ -130,20 +136,32 @@ def generate_dataset(output_json: str, oversample: int = 10, temperature: float 
             
             # Find first correct trace
             correct_trace = None
+            correct_count = 0
+            
             for trace in traces:
                 predicted = cot_model.parse_answer(trace)
-                if predicted is not None and abs(predicted - ground_truth) < 0.01:
-                    correct_trace = trace
-                    break
+                if predicted is not None:
+                    # Use relative tolerance for better matching
+                    tolerance = max(0.01, abs(ground_truth) * 0.001)
+                    if abs(predicted - ground_truth) < tolerance:
+                        if correct_trace is None:
+                            correct_trace = trace
+                        correct_count += 1
             
             if correct_trace is not None:
                 # Clean up the trace for training
                 cleaned_trace = clean_reasoning_trace(correct_trace, ground_truth)
                 rft_data.append([question, ground_truth, cleaned_trace])
                 success_count += 1
-                print(f"  ✓ Question {i + q_idx + 1}: Success")
+                print(f"  ✓ Question {i + q_idx + 1}: Success ({correct_count}/{oversample} correct)")
             else:
+                # Debug: show what was actually generated
+                sample_trace = traces[0][:200] if traces else "No traces"
+                sample_parsed = cot_model.parse_answer(traces[0]) if traces else None
                 print(f"  ✗ Question {i + q_idx + 1}: No correct answer found")
+                print(f"     Expected: {ground_truth}, Sample parsed: {sample_parsed}")
+                if len(sample_trace) < 200:
+                    print(f"     Sample: {sample_trace}")
     
     success_rate = success_count / num_samples * 100
     print(f"\n{'='*60}")
@@ -161,22 +179,6 @@ def generate_dataset(output_json: str, oversample: int = 10, temperature: float 
     print(f"\nDataset saved to: {output_json}")
     print(f"Total samples: {len(rft_data)}")
 
-
-
-def load_rft_dataset(path: str = "data/rft.json") -> List[Tuple[str, float, str]]:
-    """
-    Load RFT dataset from JSON file.
-    
-    Args:
-        path: Path to RFT dataset JSON
-    
-    Returns:
-        List of (question, answer, reasoning) tuples
-    """
-    with open(path, 'r') as f:
-        data = json.load(f)
-    
-    return [(item[0], item[1], item[2]) for item in data]
 
 def clean_reasoning_trace(trace: str, answer: float) -> str:
     """
@@ -203,6 +205,23 @@ def clean_reasoning_trace(trace: str, answer: float) -> str:
         trace = f"{trace} <answer>{answer}</answer>"
     
     return trace
+
+
+def load_rft_dataset(path: str = "data/rft.json") -> List[Tuple[str, float, str]]:
+    """
+    Load RFT dataset from JSON file.
+    
+    Args:
+        path: Path to RFT dataset JSON
+    
+    Returns:
+        List of (question, answer, reasoning) tuples
+    """
+    with open(path, 'r') as f:
+        data = json.load(f)
+    
+    return [(item[0], item[1], item[2]) for item in data]
+
 
 if __name__ == "__main__":
     from fire import Fire
