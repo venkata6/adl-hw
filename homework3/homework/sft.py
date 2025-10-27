@@ -1,9 +1,5 @@
 from .base_llm import BaseLLM
 from .data import Dataset, benchmark
-import torch
-from transformers import Trainer, TrainingArguments
-from peft import LoraConfig, get_peft_model, TaskType
-from pathlib import Path
 
 
 def load() -> BaseLLM:
@@ -41,19 +37,26 @@ def tokenize(tokenizer, question: str, answer: str):
     # Create labels: mask out the prompt part
     labels = [-100] * question_len + input_ids[question_len:]
 
+    # Ensure labels is same length as input_ids
+    labels = labels[:len(input_ids)]
+    
     for i in range(len(labels)):
         if full["attention_mask"][i] == 0:
             labels[i] = -100
 
-    full["labels"] = labels
-    return full
+    # Convert to dict with all values as lists (not tensors)
+    return {
+        "input_ids": full["input_ids"],
+        "attention_mask": full["attention_mask"],
+        "labels": labels
+    }
 
 
 def format_example(prompt: str, answer: str) -> dict[str, str]:
     """
     Construct a question / answer pair. Consider rounding the answer to make it easier for the LLM.
     """
-    #raise NotImplementedError()
+    # Round the answer to 2 decimal places for easier learning
     answer_float = float(answer)
     rounded_answer = round(answer_float, 2)
     
@@ -88,11 +91,35 @@ class TokenizedDataset:
         return tokenize(self.tokenizer, **formated_data)
 
 
+def data_collator(features):
+    """
+    Custom data collator that properly batches tokenized samples.
+    """
+    import torch
+    
+    # Extract fields
+    input_ids = [f["input_ids"] for f in features]
+    attention_mask = [f["attention_mask"] for f in features]
+    labels = [f["labels"] for f in features]
+    
+    # Stack into tensors
+    batch = {
+        "input_ids": torch.tensor(input_ids, dtype=torch.long),
+        "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+        "labels": torch.tensor(labels, dtype=torch.long),
+    }
+    
+    return batch
+
+
 def train_model(
-    output_dir: str,
+    output_dir: str = "homework/sft_model",
     **kwargs,
 ):
-    #raise NotImplementedError()
+    import torch
+    from transformers import Trainer, TrainingArguments
+    from peft import LoraConfig, get_peft_model, TaskType
+    from pathlib import Path
     
     # Initialize base model
     print("Initializing BaseLLM...")
@@ -115,10 +142,6 @@ def train_model(
     print("Converting model to LoRA...")
     llm.model = get_peft_model(llm.model, lora_config)
     
-    # Enable input gradients if using GPU (fixes gradient_checkpointing bug)
-    if torch.cuda.is_available():
-        llm.model.enable_input_require_grads()
-    
     # Print trainable parameters
     llm.model.print_trainable_parameters()
     
@@ -138,8 +161,8 @@ def train_model(
         logging_dir=str(output_path),
         report_to="tensorboard",
         num_train_epochs=5,
-        per_device_train_batch_size=32,
-        gradient_checkpointing=True,
+        per_device_train_batch_size=16,  # Reduced from 32 since no gradient checkpointing
+        gradient_checkpointing=False,  # Disabled to avoid gradient issues
         learning_rate=2e-4,
         weight_decay=0.01,
         logging_steps=10,
@@ -150,12 +173,13 @@ def train_model(
         remove_unused_columns=False,
     )
     
-    # Create trainer
+    # Create trainer with custom data collator
     print("Creating trainer...")
     trainer = Trainer(
         model=llm.model,
         args=training_args,
         train_dataset=tokenized_train,
+        data_collator=data_collator,
     )
     
     # Train

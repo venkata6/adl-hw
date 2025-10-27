@@ -7,21 +7,7 @@ class CoTModel(BaseLLM):
         Take a question and convert it into a chat template. The LLM will likely answer much
         better if you provide a chat template. self.tokenizer.apply_chat_template can help here
         """
-
-        # messages = [
-        #     {
-        #         "role": "user",
-        #         "content": "What is 15 + 27? Provide your answer in <answer></answer> tags."
-        #     },
-        #     {
-        #         "role": "assistant",
-        #         "content": "15 + 27 = 42\n<answer>42</answer>"
-        #     },
-        #     {
-        #         "role": "user",
-        #         "content": f"{question} Provide your answer in <answer></answer> tags."
-        #     }
-        # ] #16/25
+       
         messages = [
         {
             "role": "user",
@@ -31,14 +17,6 @@ class CoTModel(BaseLLM):
             "role": "assistant",
             "content": "23 * 4 = 92\n<answer>92</answer>"
         },
-        # {
-        #     "role": "user",
-        #     "content": "Calculate: 100 / 4. Show your work and put the final answer in <answer></answer> tags."
-        # },
-        # {
-        #     "role": "assistant",
-        #     "content": "100 / 4 = 25\n<answer>25</answer>"
-        # },
         {
             "role": "user",
             "content": f"{question} Show your work and put the final answer in <answer></answer> tags."
