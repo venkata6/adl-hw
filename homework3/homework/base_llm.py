@@ -143,7 +143,7 @@ class BaseLLM:
             inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
             max_new_tokens=50,
-            no_repeat_ngram_size=3,
+            #no_repeat_ngram_size=3,
             do_sample=do_sample,
             temperature=temperature if do_sample else 1.0,
             num_return_sequences=actual_num_return,
