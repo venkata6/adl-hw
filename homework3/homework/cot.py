@@ -10,8 +10,8 @@ class CoTModel(BaseLLM):
        
         messages = [ 
         {
-        "role": "system",
-        "content": " For unit conversions, always identify: 1) the conversion factor, 2) whether to multiply or divide. NEVER use powers of 2 (1024, 2048, 4096, 1048576). Use decimal: 1000, 2000, 10000."
+          "role": "system",
+          "content": "Always use base 10, For unit conversions, always identify: 1) the conversion factor, 2) whether to multiply or divide. NEVER use powers of 2 (1024, 2048, 4096, 1048576). Use decimal: 1000, 2000, 10000."
         },
         {
             "role": "user",
@@ -19,7 +19,7 @@ class CoTModel(BaseLLM):
         },
         {
             "role": "assistant",
-            "content": "1 kg = 1000 g , 2 × 1000 = 2000\n<answer>2000</answer>"
+            "content": "2 × 1000 = 2000\n<answer>2000</answer>"
         },
         {
             "role": "user",
