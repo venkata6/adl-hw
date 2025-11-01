@@ -32,27 +32,22 @@ def tokenize(tokenizer, question: str, answer: str):
     full = tokenizer(full_text, padding="max_length", truncation=True, max_length=128)
 
     input_ids = full["input_ids"]
-    
-    # Tokenize question with space to get accurate boundary
-    question_with_space = tokenizer(question + " ", add_special_tokens=False)
-    question_len = len(question_with_space["input_ids"])
+    question_len = len(tokenizer(question)["input_ids"])
 
-    # Create labels: copy input_ids first
-    labels = list(input_ids)
-    
-    # Mask out the question part
-    for i in range(min(question_len, len(labels))):
-        labels[i] = -100
+    # Create labels: mask out the prompt part
+    labels = [-100] * question_len + input_ids[question_len:]
 
-    # Mask out padding tokens
+    # Ensure labels is same length as input_ids
+    labels = labels[:len(input_ids)]
+    
     for i in range(len(labels)):
         if full["attention_mask"][i] == 0:
             labels[i] = -100
 
-    # Return dict with all necessary fields as lists
+    # Convert to dict with all values as lists (not tensors)
     return {
-        "input_ids": list(full["input_ids"]),
-        "attention_mask": list(full["attention_mask"]),
+        "input_ids": full["input_ids"],
+        "attention_mask": full["attention_mask"],
         "labels": labels
     }
 
@@ -65,7 +60,7 @@ def format_example(prompt: str, answer: str) -> dict[str, str]:
     answer_float = float(answer)
     rounded_answer = round(answer_float, 2)
     
-    # Format as: <answer>{answer}</answer>
+    # Format as requested: <answer>{answer}</answer>
     formatted_answer = f"<answer>{rounded_answer}</answer>"
     
     return {
@@ -102,12 +97,12 @@ def data_collator(features):
     """
     import torch
     
-    # Extract fields from features
+    # Extract fields
     input_ids = [f["input_ids"] for f in features]
     attention_mask = [f["attention_mask"] for f in features]
     labels = [f["labels"] for f in features]
     
-    # Convert to tensors
+    # Stack into tensors
     batch = {
         "input_ids": torch.tensor(input_ids, dtype=torch.long),
         "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
@@ -130,9 +125,9 @@ def train_model(
     print("Initializing BaseLLM...")
     llm = BaseLLM()
     
-    # Create LoRA configuration
+    # Create LoRA config
     # Using r=8 to keep model size under 20MB
-    # lora_alpha = 4-5 times rank
+    # lora_alpha = 4-5 times rank, so 32-40
     print("Creating LoRA configuration...")
     lora_config = LoraConfig(
         r=8,
@@ -146,11 +141,7 @@ def train_model(
     # Convert model to LoRA
     print("Converting model to LoRA...")
     llm.model = get_peft_model(llm.model, lora_config)
-    
-    # CRITICAL: Enable input gradients when using gradient_checkpointing=True
-    # This is required to avoid gradient flow issues with LoRA + gradient checkpointing
     llm.model.enable_input_require_grads()
-    
     # Print trainable parameters
     llm.model.print_trainable_parameters()
     
@@ -170,19 +161,19 @@ def train_model(
         logging_dir=str(output_path),
         report_to="tensorboard",
         num_train_epochs=5,
-        per_device_train_batch_size=32,
-        gradient_checkpointing=True,  # Enabled to save GPU memory
-        learning_rate=3e-4,
+        per_device_train_batch_size=32,  
+        gradient_checkpointing=True,  # Disabled to avoid gradient issues
+        learning_rate=2e-4,
         weight_decay=0.01,
         logging_steps=10,
         save_strategy="epoch",
         save_total_limit=2,
-        fp16=torch.cuda.is_available(),
+        #fp16=torch.cuda.is_available(),
         dataloader_num_workers=0,
         remove_unused_columns=False,
     )
     
-    # Create trainer
+    # Create trainer with custom data collator
     print("Creating trainer...")
     trainer = Trainer(
         model=llm.model,
@@ -191,17 +182,18 @@ def train_model(
         data_collator=data_collator,
     )
     
-    # Train the model
+    # Train
     print("Starting training...")
     trainer.train()
     
     # Save the final model
-    print(f"\nSaving model to {output_path}...")
+    print(f"Saving model to {output_path}...")
     trainer.save_model(str(output_path))
     
     print("Training complete!")
     
     # Test the model
+    print("\nTesting trained model...")
     test_model(output_dir)
 
 
@@ -213,7 +205,6 @@ def test_model(ckpt_path: str):
     from peft import PeftModel
 
     llm.model = PeftModel.from_pretrained(llm.model, ckpt_path).to(llm.device)
-    llm.model.eval()
 
     benchmark_result = benchmark(llm, testset, 100)
     print(f"{benchmark_result.accuracy=}  {benchmark_result.answer_rate=}")

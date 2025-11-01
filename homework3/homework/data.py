@@ -20,6 +20,7 @@ class Dataset:
 
 
 def is_answer_valid(answer: float, correct_answer: float, relative_tolerance: float = 0.05) -> bool:
+    print(f"answer={answer}",f"correct answer={correct_answer}")
     return abs(round(answer, 3) - round(correct_answer, 3)) < relative_tolerance * abs(round(correct_answer, 3))
 
 
