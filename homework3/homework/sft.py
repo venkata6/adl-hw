@@ -29,7 +29,7 @@ def tokenize(tokenizer, question: str, answer: str):
 
     tokenizer.padding_side = "right"
     tokenizer.pad_token = tokenizer.eos_token
-    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=128)
+    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=256)
 
     input_ids = full["input_ids"]
     question_len = len(tokenizer(question)["input_ids"])
@@ -163,7 +163,7 @@ def train_model(
         num_train_epochs=5,
         per_device_train_batch_size=32,  
         gradient_checkpointing=True,  # Disabled to avoid gradient issues
-        learning_rate=2e-4,
+        learning_rate=1e-3,
         weight_decay=0.01,
         logging_steps=10,
         save_strategy="epoch",

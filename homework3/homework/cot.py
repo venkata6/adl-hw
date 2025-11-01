@@ -15,6 +15,14 @@ class CoTModel(BaseLLM):
         },
         {
             "role": "user",
+            "content": "How do we express 2 kmh in terms of ft/s?"
+        },
+        {
+            "role": "assistant",
+            "content": "1 km = 3280.83989501312352 ft,Convert hours to seconds: 1 h = 3600 s,2 km/h = 2 × 3280.83989501312352 / 3600 = 1.8226888305628464<answer>1.8226888305628464</answer>"
+        },
+        {
+            "role": "user",
             "content": "Convert 2 kilograms to grams"
         },
         {
