@@ -147,6 +147,10 @@ def train_model(
     print("Converting model to LoRA...")
     llm.model = get_peft_model(llm.model, lora_config)
     
+    # CRITICAL: Enable input gradients when using gradient_checkpointing=True
+    # This is required to avoid gradient flow issues with LoRA + gradient checkpointing
+    llm.model.enable_input_require_grads()
+    
     # Print trainable parameters
     llm.model.print_trainable_parameters()
     
@@ -166,8 +170,8 @@ def train_model(
         logging_dir=str(output_path),
         report_to="tensorboard",
         num_train_epochs=5,
-        per_device_train_batch_size=16,  # Reduced batch size since no gradient checkpointing
-        gradient_checkpointing=False,  # Disabled to avoid gradient issues
+        per_device_train_batch_size=32,
+        gradient_checkpointing=True,  # Enabled to save GPU memory
         learning_rate=3e-4,
         weight_decay=0.01,
         logging_steps=10,
