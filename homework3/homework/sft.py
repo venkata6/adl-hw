@@ -20,39 +20,48 @@ def load() -> BaseLLM:
 def tokenize(tokenizer, question: str, answer: str):
     """
     Tokenize a data element.
-    We first append the <EOS> token to the question / answer pair.
+    We append the <EOS> token to the question / answer pair.
     Then we tokenize and construct the ground truth `labels`.
     `labels[i] == -100` for the question or masked out parts, since we only want to supervise
     the answer.
+    
+    The model should complete: question -> <answer>{answer}</answer>
     """
+    # Set padding configuration
     tokenizer.padding_side = "right"
     tokenizer.pad_token = tokenizer.eos_token
     
-    # Tokenize the full text
+    # Create the full text: question followed by answer with EOS
     full_text = f"{question} {answer}{tokenizer.eos_token}"
-    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=256)
-
-    # Tokenize just the question with space to find where answer starts
-    # Use add_special_tokens=False to avoid counting special tokens twice
-    question_with_space = tokenizer(question + " ", add_special_tokens=False)
-    question_and_space_len = len(question_with_space["input_ids"])
-
+    
+    # Tokenize the full text
+    full = tokenizer(
+        full_text, 
+        padding="max_length", 
+        truncation=True, 
+        max_length=256
+    )
+    
+    # Tokenize just the question part to find where the answer starts
+    # Use add_special_tokens=False to get just the question tokens
+    question_with_space = tokenizer(f"{question} ", add_special_tokens=False)
+    question_len = len(question_with_space["input_ids"])
+    
     input_ids = full["input_ids"]
     attention_mask = full["attention_mask"]
     
-    # Create labels: copy input_ids first to ensure same length
+    # Create labels by copying input_ids
     labels = list(input_ids)
     
-    # Mask out the question part (including the space after it)
-    for i in range(question_and_space_len):
-        if i < len(labels):
-            labels[i] = -100
+    # Mask the question part - we only supervise the answer
+    for i in range(min(question_len, len(labels))):
+        labels[i] = -100
     
-    # Mask out padding tokens
+    # Mask padding tokens
     for i in range(len(labels)):
         if attention_mask[i] == 0:
             labels[i] = -100
-
+    
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
@@ -63,12 +72,13 @@ def tokenize(tokenizer, question: str, answer: str):
 def format_example(prompt: str, answer: str) -> dict[str, str]:
     """
     Construct a question / answer pair. Consider rounding the answer to make it easier for the LLM.
+    Returns a dict with 'question' and 'answer' keys.
     """
     # Round the answer to 2 decimal places for easier learning
     answer_float = float(answer)
     rounded_answer = round(answer_float, 2)
     
-    # Format as requested: <answer>{answer}</answer>
+    # Format as: <answer>{answer}</answer>
     formatted_answer = f"<answer>{rounded_answer}</answer>"
     
     return {
@@ -105,12 +115,12 @@ def data_collator(features):
     """
     import torch
     
-    # Extract fields
+    # Extract fields from features
     input_ids = [f["input_ids"] for f in features]
     attention_mask = [f["attention_mask"] for f in features]
     labels = [f["labels"] for f in features]
     
-    # Stack into tensors
+    # Convert to tensors
     batch = {
         "input_ids": torch.tensor(input_ids, dtype=torch.long),
         "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
@@ -133,7 +143,9 @@ def train_model(
     print("Initializing BaseLLM...")
     llm = BaseLLM()
     
-    # Create LoRA config
+    # Create LoRA configuration
+    # Using r=8 to keep model size under 20MB
+    # lora_alpha = 4-5 times rank, so 32-40
     print("Creating LoRA configuration...")
     lora_config = LoraConfig(
         r=8,
@@ -147,6 +159,10 @@ def train_model(
     # Convert model to LoRA
     print("Converting model to LoRA...")
     llm.model = get_peft_model(llm.model, lora_config)
+    
+    # Enable input gradients if using GPU (required for gradient checkpointing)
+    if torch.cuda.is_available():
+        llm.model.enable_input_require_grads()
     
     # Print trainable parameters
     llm.model.print_trainable_parameters()
@@ -179,7 +195,7 @@ def train_model(
         
         # Show full text for comparison
         full_text = llm.tokenizer.decode(sample['input_ids'])
-        print(f"Full text: {full_text}")
+        print(f"Full text: {full_text[:200]}...")
     print("="*60 + "\n")
     
     # Setup output directory
@@ -190,12 +206,12 @@ def train_model(
     print("Setting up training arguments...")
     training_args = TrainingArguments(
         output_dir=str(output_path),
-        logging_dir=str(output_path / "logs"),
+        logging_dir=str(output_path),
         report_to="tensorboard",
         num_train_epochs=5,
-        per_device_train_batch_size=16,
-        gradient_checkpointing=False,
-        learning_rate=2e-4,
+        per_device_train_batch_size=32,
+        gradient_checkpointing=True,  # Save GPU memory
+        learning_rate=3e-4,
         weight_decay=0.01,
         logging_steps=10,
         save_strategy="epoch",
@@ -214,11 +230,11 @@ def train_model(
         data_collator=data_collator,
     )
     
-    # Train
+    # Train the model
     print("Starting training...")
     trainer.train()
     
-    # Save the final model
+    # Save the final model to the correct directory
     print(f"\nSaving model to {output_path}...")
     trainer.save_model(str(output_path))
     
@@ -230,6 +246,9 @@ def train_model(
 
 
 def test_model(ckpt_path: str):
+    """
+    Test the trained model on the validation set.
+    """
     testset = Dataset("valid")
     llm = BaseLLM()
 
