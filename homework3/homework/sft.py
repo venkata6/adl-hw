@@ -25,29 +25,36 @@ def tokenize(tokenizer, question: str, answer: str):
     `labels[i] == -100` for the question or masked out parts, since we only want to supervise
     the answer.
     """
-    full_text = f"{question} {answer}{tokenizer.eos_token}"
-
-    tokenizer.padding_side = "left"
+    tokenizer.padding_side = "right"
     tokenizer.pad_token = tokenizer.eos_token
-    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=256)
+    
+    # Tokenize question alone to find its length in the combined sequence
+    question_with_space = f"{question} "  # Include the space that will be in full text
+    question_tokens = tokenizer(question_with_space, add_special_tokens=True)
+    question_len = len(question_tokens["input_ids"])
+    
+    # Now tokenize the full sequence
+    full_text = f"{question} {answer}{tokenizer.eos_token}"
+    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=256, add_special_tokens=True)
 
     input_ids = full["input_ids"]
-    question_len = len(tokenizer(question)["input_ids"])
-
-    # Create labels: mask out the prompt part
-    labels = [-100] * question_len + input_ids[question_len:]
-
-    # Ensure labels is same length as input_ids
-    labels = labels[:len(input_ids)]
+    attention_mask = full["attention_mask"]
     
+    # Create labels by copying input_ids
+    labels = input_ids.copy()
+    
+    # Mask out the question part
+    for i in range(min(question_len, len(labels))):
+        labels[i] = -100
+    
+    # Mask out padding tokens
     for i in range(len(labels)):
-        if full["attention_mask"][i] == 0:
+        if attention_mask[i] == 0:
             labels[i] = -100
 
-    # Convert to dict with all values as lists (not tensors)
     return {
-        "input_ids": full["input_ids"],
-        "attention_mask": full["attention_mask"],
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
         "labels": labels
     }
 
