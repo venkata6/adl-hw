@@ -28,24 +28,25 @@ def tokenize(tokenizer, question: str, answer: str):
     tokenizer.padding_side = "right"
     tokenizer.pad_token = tokenizer.eos_token
     
-    # Tokenize question alone to find its length in the combined sequence
-    question_with_space = f"{question} "  # Include the space that will be in full text
-    question_tokens = tokenizer(question_with_space, add_special_tokens=True)
-    question_len = len(question_tokens["input_ids"])
-    
-    # Now tokenize the full sequence
+    # Tokenize the full text
     full_text = f"{question} {answer}{tokenizer.eos_token}"
-    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=256, add_special_tokens=True)
+    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=256)
+
+    # Tokenize just the question with space to find where answer starts
+    # Use add_special_tokens=False to avoid counting special tokens twice
+    question_with_space = tokenizer(question + " ", add_special_tokens=False)
+    question_and_space_len = len(question_with_space["input_ids"])
 
     input_ids = full["input_ids"]
     attention_mask = full["attention_mask"]
     
-    # Create labels by copying input_ids
-    labels = input_ids.copy()
+    # Create labels: copy input_ids first to ensure same length
+    labels = list(input_ids)
     
-    # Mask out the question part
-    for i in range(min(question_len, len(labels))):
-        labels[i] = -100
+    # Mask out the question part (including the space after it)
+    for i in range(question_and_space_len):
+        if i < len(labels):
+            labels[i] = -100
     
     # Mask out padding tokens
     for i in range(len(labels)):
@@ -133,8 +134,6 @@ def train_model(
     llm = BaseLLM()
     
     # Create LoRA config
-    # Using r=8 to keep model size under 20MB
-    # lora_alpha = 4-5 times rank, so 32-40
     print("Creating LoRA configuration...")
     lora_config = LoraConfig(
         r=8,
@@ -157,6 +156,32 @@ def train_model(
     train_dataset = Dataset("train")
     tokenized_train = TokenizedDataset(llm.tokenizer, train_dataset, format_example)
     
+    # Debug: Check a sample to ensure labels are correct
+    print("\n" + "="*60)
+    print("DEBUGGING TOKENIZATION")
+    print("="*60)
+    sample = tokenized_train[0]
+    print(f"Input IDs length: {len(sample['input_ids'])}")
+    print(f"Labels length: {len(sample['labels'])}")
+    non_masked = sum(1 for l in sample['labels'] if l != -100)
+    print(f"Non-masked labels count: {non_masked}")
+    
+    if non_masked == 0:
+        print("\n❌ ERROR: All labels are masked! Training will fail.")
+        print("Full text:", llm.tokenizer.decode(sample['input_ids']))
+        raise ValueError("All labels are masked. Check tokenization logic.")
+    else:
+        print(f"\n✓ Labels look good! {non_masked} tokens will be supervised.")
+        # Show what's being supervised
+        supervised_tokens = [id for id, label in zip(sample['input_ids'], sample['labels']) if label != -100]
+        supervised_text = llm.tokenizer.decode(supervised_tokens)
+        print(f"Supervised text: {supervised_text}")
+        
+        # Show full text for comparison
+        full_text = llm.tokenizer.decode(sample['input_ids'])
+        print(f"Full text: {full_text}")
+    print("="*60 + "\n")
+    
     # Setup output directory
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -165,11 +190,11 @@ def train_model(
     print("Setting up training arguments...")
     training_args = TrainingArguments(
         output_dir=str(output_path),
-        logging_dir=str(output_path),
+        logging_dir=str(output_path / "logs"),
         report_to="tensorboard",
         num_train_epochs=5,
-        per_device_train_batch_size=16,  # Reduced from 32 since no gradient checkpointing
-        gradient_checkpointing=False,  # Disabled to avoid gradient issues
+        per_device_train_batch_size=16,
+        gradient_checkpointing=False,
         learning_rate=2e-4,
         weight_decay=0.01,
         logging_steps=10,
@@ -194,7 +219,7 @@ def train_model(
     trainer.train()
     
     # Save the final model
-    print(f"Saving model to {output_path}...")
+    print(f"\nSaving model to {output_path}...")
     trainer.save_model(str(output_path))
     
     print("Training complete!")
@@ -212,6 +237,7 @@ def test_model(ckpt_path: str):
     from peft import PeftModel
 
     llm.model = PeftModel.from_pretrained(llm.model, ckpt_path).to(llm.device)
+    llm.model.eval()
 
     benchmark_result = benchmark(llm, testset, 100)
     print(f"{benchmark_result.accuracy=}  {benchmark_result.answer_rate=}")
