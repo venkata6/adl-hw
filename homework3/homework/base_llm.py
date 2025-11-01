@@ -45,22 +45,22 @@ class BaseLLM:
         - decode the outputs with self.tokenizer.decode
 
         """
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        # inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
         
-        # Generate tokens
-        outputs = self.model.generate(
-            inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            max_new_tokens=50,
-            do_sample=False,
-            eos_token_id=self.tokenizer.eos_token_id
-        )
+        # # Generate tokens
+        # outputs = self.model.generate(
+        #     inputs["input_ids"],
+        #     attention_mask=inputs["attention_mask"],
+        #     max_new_tokens=50,
+        #     do_sample=False,
+        #     eos_token_id=self.tokenizer.eos_token_id
+        # )
         
-        # Decode only the generated tokens (skip the input prompt)
-        generated_tokens = outputs[0, len(inputs["input_ids"][0]):]
-        answer = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        # # Decode only the generated tokens (skip the input prompt)
+        # generated_tokens = outputs[0, len(inputs["input_ids"][0]):]
+        # answer = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
         
-        #return answer
+        # return answer
         return self.batched_generate([prompt])[0]
 
     @overload
@@ -142,7 +142,7 @@ class BaseLLM:
         outputs = self.model.generate(
             inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
-            max_new_tokens=50,
+            max_new_tokens=100,
             do_sample=do_sample,
             temperature=temperature if do_sample else 1.0,
             num_return_sequences=actual_num_return,
