@@ -1,42 +1,39 @@
 """
-RFT (Reinforcement Fine-Tuning) implementation.
-Generates Chain-of-Thought reasoning data by sampling multiple outputs and selecting correct ones.
+Memory-efficient RFT data generation.
+Processes one question at a time to avoid OOM errors.
 """
 import json
 from pathlib import Path
+import torch
 from .base_llm import BaseLLM
 from .cot import CoTModel
 from .data import Dataset
 
 
-def generate_dataset(output_json: str = "data/rft.json", oversample: int = 10, temperature: float = 0.6):
+def generate_dataset(
+    output_json: str = "data/rft.json", 
+    oversample: int = 5,  # REDUCED from 10 to 5
+    temperature: float = 0.6
+):
     """
-    Generate RFT dataset by:
-    1. Using CoTModel to generate multiple completions per question
-    2. Selecting completions with correct answers
-    3. Saving question + reasoning + answer tuples
+    Generate RFT dataset ONE QUESTION AT A TIME to avoid OOM.
     
     Args:
         output_json: Path to save the generated dataset
-        oversample: Number of completions to generate per question
+        oversample: Number of completions per question (reduced to 5 for memory)
         temperature: Sampling temperature for diversity
     """
     print("="*80)
-    print("GENERATING RFT DATASET")
+    print("MEMORY-EFFICIENT RFT DATASET GENERATION")
     print("="*80)
     
-    # Load CoT model (preferably the larger one for better reasoning)
+    # Clear GPU memory
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Load CoT model
     print("\nLoading CoTModel...")
-    # Try to use the larger model for better rollouts
-    try:
-        from .base_llm import checkpoint as default_checkpoint
-        # Use larger model if available
-        larger_checkpoint = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
-        print(f"Attempting to use larger model: {larger_checkpoint}")
-        model = CoTModel(checkpoint=larger_checkpoint)
-    except:
-        print("Falling back to default model")
-        model = CoTModel()
+    model = CoTModel()
     
     # Load training data
     print("Loading training dataset...")
@@ -51,70 +48,64 @@ def generate_dataset(output_json: str = "data/rft.json", oversample: int = 10, t
     rft_data = []
     
     print(f"\nGenerating {oversample} completions per question with temperature={temperature}")
-    print(f"Processing {total_questions} questions...")
+    print(f"Processing {total_questions} questions ONE AT A TIME...")
     print("="*80)
     
-    # Process in batches for efficiency
-    batch_size = 10
-    
-    for batch_start in range(0, total_questions, batch_size):
-        batch_end = min(batch_start + batch_size, total_questions)
-        batch_prompts = []
-        batch_answers = []
+    # Process ONE question at a time to save memory
+    for idx in range(total_questions):
+        question, true_answer = train_data[idx]
+        true_answer = float(true_answer)
         
-        # Prepare batch
-        for idx in range(batch_start, batch_end):
-            question, answer = train_data[idx]
-            formatted_prompt = model.format_prompt(question)
-            batch_prompts.append(formatted_prompt)
-            batch_answers.append(float(answer))
-        
-        # Generate multiple completions for each prompt in the batch
         try:
-            # Generate oversample completions per prompt
-            completions_batch = model.batched_generate(
-                batch_prompts,
+            # Format prompt
+            formatted_prompt = model.format_prompt(question)
+            
+            # Generate multiple completions for THIS SINGLE QUESTION
+            completions = model.batched_generate(
+                [formatted_prompt],  # Single prompt as a list
                 num_return_sequences=oversample,
                 temperature=temperature
             )
             
-            # Process each question in the batch
-            for i, (question, true_answer) in enumerate(zip(
-                [train_data[batch_start + i][0] for i in range(len(batch_prompts))],
-                batch_answers
-            )):
-                completions = completions_batch[i]
+            # completions is a list with one element (which is a list of completions)
+            completions = completions[0] if isinstance(completions[0], list) else completions
+            
+            # Find a correct completion
+            found_correct = False
+            for completion in completions:
+                # Parse the answer
+                parsed_answer = model.parse_answer(completion)
                 
-                # Find a correct completion
-                found_correct = False
-                for completion in completions:
-                    # Parse the answer from the completion
-                    parsed_answer = model.parse_answer(completion)
-                    
-                    # Check if answer is correct (with small tolerance for floating point)
-                    if abs(parsed_answer - true_answer) < 0.01 * abs(true_answer) or abs(parsed_answer - true_answer) < 0.01:
-                        # Found a correct answer!
-                        rft_data.append([
-                            question,
-                            true_answer,
-                            completion
-                        ])
-                        successful_generations += 1
-                        found_correct = True
-                        break
-                
-                if not found_correct:
-                    failed_generations += 1
+                # Check if correct (with tolerance)
+                tolerance = max(0.01 * abs(true_answer), 0.01)
+                if abs(parsed_answer - true_answer) < tolerance:
+                    # Found a correct answer!
+                    rft_data.append([
+                        question,
+                        true_answer,
+                        completion
+                    ])
+                    successful_generations += 1
+                    found_correct = True
+                    break
+            
+            if not found_correct:
+                failed_generations += 1
         
         except Exception as e:
-            print(f"Error processing batch {batch_start}-{batch_end}: {e}")
-            failed_generations += (batch_end - batch_start)
+            print(f"Error on question {idx}: {e}")
+            failed_generations += 1
             continue
         
-        # Progress update
-        if (batch_end) % 100 == 0 or batch_end == total_questions:
-            success_rate = 100 * successful_generations / (successful_generations + failed_generations) if (successful_generations + failed_generations) > 0 else 0
-            print(f"Progress: {batch_end}/{total_questions} | "
+        # Clear GPU memory every 10 questions
+        if (idx + 1) % 10 == 0:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        
+        # Progress update every 50 questions
+        if (idx + 1) % 50 == 0 or (idx + 1) == total_questions:
+            success_rate = 100 * successful_generations / (idx + 1)
+            print(f"Progress: {idx+1}/{total_questions} | "
                   f"Success: {successful_generations} | "
                   f"Failed: {failed_generations} | "
                   f"Success Rate: {success_rate:.1f}%")
