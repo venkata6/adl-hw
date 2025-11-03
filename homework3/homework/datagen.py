@@ -23,6 +23,22 @@ logging.basicConfig(
 )
 
 
+def is_answer_valid(answer: float, correct_answer: float, relative_tolerance: float = 0.05) -> bool:
+    """
+    Check if answer is valid with relative tolerance.
+    
+    Args:
+        answer: Generated answer
+        correct_answer: Ground truth answer
+        relative_tolerance: Relative tolerance (default 5%)
+    
+    Returns:
+        bool: True if answer is within tolerance
+    """
+    print(f"answer={answer}", f"correct answer={correct_answer}")
+    return abs(round(answer, 3) - round(correct_answer, 3)) < relative_tolerance * abs(round(correct_answer, 3))
+
+
 def is_colab():
     """Check if running in Google Colab"""
     try:
@@ -81,7 +97,8 @@ def generate_dataset(
     resume: bool = True,
     min_reasoning_length: int = 20,
     selection_strategy: str = "longest",
-    use_gdrive: bool = None,  # NEW: Auto-detect or force Google Drive
+    use_gdrive: bool = None,
+    relative_tolerance: float = 0.05,  # NEW: Relative tolerance parameter
 ):
     """
     Generate RFT dataset with Google Drive checkpointing support.
@@ -96,6 +113,7 @@ def generate_dataset(
         min_reasoning_length: Minimum chars for valid reasoning
         selection_strategy: "first", "longest", or "shortest"
         use_gdrive: Use Google Drive for checkpoints (None=auto-detect, True=force, False=local only)
+        relative_tolerance: Relative tolerance for answer validation (default 5%)
     """
     print("="*80)
     print("RFT DATASET GENERATION")
@@ -162,6 +180,7 @@ def generate_dataset(
     print(f"  Temperature: {temperature}")
     print(f"  Min reasoning: {min_reasoning_length} chars")
     print(f"  Selection: {selection_strategy}")
+    print(f"  Relative tolerance: {relative_tolerance*100}%")
     print(f"  Checkpointing every {checkpoint_every} questions")
     print("="*80)
     
@@ -180,6 +199,7 @@ def generate_dataset(
             temperature=temperature,
             min_reasoning_length=min_reasoning_length,
             selection_strategy=selection_strategy,
+            relative_tolerance=relative_tolerance,  # NEW: Pass tolerance
         )
         
         if success:
@@ -258,13 +278,20 @@ def process_question(
     temperature: float,
     min_reasoning_length: int,
     selection_strategy: str,
+    relative_tolerance: float,  # NEW: Added tolerance parameter
 ) -> bool:
-    """Process a single question using RFT approach"""
+    """
+    Process a single question using RFT approach with custom answer validation.
+    
+    Returns:
+        bool: True if at least one correct completion found
+    """
     try:
         # Format prompt
         formatted_prompt = model.format_prompt(question)
         
         # Generate multiple completions
+        logging.debug(f"Generating {oversample} completions for question {idx}")
         completions = model.batched_generate(
             [formatted_prompt],
             num_return_sequences=oversample,
@@ -278,19 +305,23 @@ def process_question(
         correct_completions = []
         
         for completion in completions:
+            # Filter out trivial/incomplete reasoning
             if len(completion.strip()) < min_reasoning_length:
                 continue
             
             try:
+                # Parse answer from completion
                 parsed_answer = model.parse_answer(completion)
-                tolerance = max(0.01 * abs(true_answer), 0.01)
                 
-                if abs(parsed_answer - true_answer) < tolerance:
+                # NEW: Use custom validation function instead of simple tolerance
+                if is_answer_valid(parsed_answer, true_answer, relative_tolerance):
                     correct_completions.append(completion)
-            except:
+                    
+            except Exception as e:
+                logging.debug(f"Failed to parse completion: {e}")
                 continue
         
-        # Select best completion
+        # Select best completion if any are correct
         if correct_completions:
             if selection_strategy == "first":
                 selected = correct_completions[0]
@@ -301,10 +332,14 @@ def process_question(
             else:
                 selected = correct_completions[0]
             
+            # Add to dataset as [question, answer, reasoning] tuple
             rft_data.append([question, true_answer, selected])
+            
+            logging.debug(f"Question {idx}: Success! Found {len(correct_completions)} correct completions")
             return True
-        
-        return False
+        else:
+            logging.debug(f"Question {idx}: Failed - no correct completions found")
+            return False
         
     except Exception as e:
         logging.error(f"Error processing question {idx}: {e}")
@@ -354,6 +389,7 @@ def show_statistics(rft_data: List, total_questions: int):
     print(f"Total examples: {len(rft_data)}")
     print(f"Coverage: {len(rft_data)}/{total_questions} ({100*len(rft_data)/total_questions:.1f}%)")
     print(f"Average reasoning length: {avg_length:.0f} characters")
+    print(f"Min/Max length: {min(reasoning_lengths)}/{max(reasoning_lengths)} characters")
     
     # Sample examples
     print("\n" + "="*80)
@@ -363,7 +399,7 @@ def show_statistics(rft_data: List, total_questions: int):
         print(f"\nExample {i+1}:")
         print(f"  Question: {rft_data[i][0][:100]}...")
         print(f"  Answer: {rft_data[i][1]}")
-        print(f"  Reasoning: {rft_data[i][2][:150]}...")
+        print(f"  Reasoning ({len(rft_data[i][2])} chars): {rft_data[i][2][:150]}...")
 
 
 def clear_checkpoint(checkpoint_file: str = "data/rft_checkpoint.json", use_gdrive: bool = None):
