@@ -8,49 +8,39 @@ class CoTModel(BaseLLM):
         better if you provide a chat template. self.tokenizer.apply_chat_template can help here
         """
        
-        messages = [ 
-        {
-          "role": "system",
-          "content": "Always use base 10, For unit conversions, always identify: 1) the conversion factor, 2) whether to multiply or divide. NEVER use powers of 2 (1024, 2048, 4096, 1048576). Use decimal: 1000, 2000, 10000."
-        },
-        {
-            "role": "user",
-            "content": "Convert 2 kilograms to grams"
-        },
-        {
-            "role": "assistant",
-            "content": "2 × 1000 = 2000\n<answer>2000</answer>"
-        },
-        {
-            "role": "user",
-            "content": "Express 2 cm as a quantity of in. Show your work and put the final answer in <answer></answer> tags."
-        },
-        {
-            "role": "assistant",
-            "content": "1 cm = 0.39370079 in, 2 * 0.39370079\n<answer>0.7874015748031495</answer>"
-        },     
-        {
-            "role": "user",
-            "content": "Could you give the conversion from year to day for 7 units? Show your work and put the final answer in <answer></answer> tags."
-        },
-        {
-            "role": "assistant",
-            "content": "7 * 365.24219878\n<answer>2556.69539146875</answer>"
-        },
-        {
-            "role": "user",
-            "content": "Calculate: 23 * 4. Show your work and put the final answer in <answer></answer> tags."
-        },
-        {
-            "role": "assistant",
-            "content": "23 * 4 = 92\n<answer>92</answer>"
-        },
-        {
-            "role": "user",
-            "content": f"{question} Show your work and put the final answer in <answer></answer> tags."
-        }
-        ] # 24/25 benchmark_result.accuracy=0.39  benchmark_result.answer_rate=0.77
-        
+        messages = [
+            {"role": "system", "content": (
+                "You are a precise and helpful unit conversion assistant. "
+                "Always think step-by-step and show intermediate calculations when needed. be concise "
+                "Output the final numeric result on a new line enclosed in <answer>...</answer> tags."
+            )},
+            # metric conversion
+            {"role": "user", "content": "How many grams are in 5 kg?"},
+            {"role": "assistant", "content": "1 kg = 1000 grams\n5 * 1000 = 5000 grams\n<answer>5000</answer>"},
+            # imperial conversion
+            {"role": "user", "content": "How many pounds are in 3 kg?"},
+            {"role": "assistant",
+             "content": "1 kg ≈ 2.20462 pounds\n3 * 2.20462 ≈ 6.61386 pounds\n<answer>6.61386</answer>"},
+            # reverse conversion
+            {"role": "user", "content": "How many kilograms are in 2200 grams?"},
+            {"role": "assistant", "content": "1000 grams = 1 kg\n2200 / 1000 = 2.2 kg\n<answer>2.2</answer>"},
+            # conversion with decimals
+            {"role": "user", "content": "How many inches are in 2.5 feet?"},
+            {"role": "assistant", "content": "1 foot = 12 inches\n2.5 * 12 = 30 inches\n<answer>30</answer>"},
+            # temperature (different style)
+            {"role": "user", "content": "What is 100 degrees Fahrenheit in Celsius?"},
+            {"role": "assistant",
+             "content": "C = (F - 32) * 5/9\nC = (100 - 32) * 5/9 = 68 * 5/9 ≈ 37.78\n<answer>37.78</answer>"},
+            # time
+            {"role": "user", "content": "How many minutes are in 3.5 hours?"},
+            {"role": "assistant", "content": "1 hour = 60 minutes\n3.5 * 60 = 210 minutes\n<answer>210</answer>"},
+            # area
+            {"role": "user", "content": "How many square meters are in 2 hectares?"},
+            {"role": "assistant",
+             "content": "1 hectare = 10,000 square meters\n2 * 10,000 = 20000 square meters\n<answer>20000</answer>"},
+            {"role": "user", "content": question},
+        ]
+       
         return self.tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
