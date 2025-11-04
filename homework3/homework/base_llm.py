@@ -3,15 +3,17 @@ from typing import overload
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-checkpoint = "HuggingFaceTB/SmolLM2-360M-Instruct"
+DEFAULT_CHECKPOINT = "HuggingFaceTB/SmolLM2-360M-Instruct"
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 
 class BaseLLM:
-    def __init__(self, checkpoint=checkpoint):        
+    def __init__(self, checkpoint: str=DEFAULT_CHECKPOINT):  
+        print(f"Using model {checkpoint}")      
         self.tokenizer = AutoTokenizer.from_pretrained(checkpoint)
         self.model = AutoModelForCausalLM.from_pretrained(checkpoint).to(device)
+    
         self.device = device
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
