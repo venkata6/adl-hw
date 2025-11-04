@@ -124,7 +124,7 @@ def train_model(
         output_dir=str(output_path),
         logging_dir=str(output_path / "logs"),
         report_to="tensorboard",
-        num_train_epochs=5,
+        num_train_epochs=10,
         per_device_train_batch_size=16,
         gradient_accumulation_steps=2,
         gradient_checkpointing=torch.cuda.is_available(),  # Only on CUDA
