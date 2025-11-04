@@ -35,7 +35,7 @@ def is_answer_valid(answer: float, correct_answer: float, relative_tolerance: fl
     Returns:
         bool: True if answer is within tolerance
     """
-    print(f"answer={answer}", f"correct answer={correct_answer}")
+    #print(f"answer={answer}", f"correct answer={correct_answer}")
     return abs(round(answer, 3) - round(correct_answer, 3)) < relative_tolerance * abs(round(correct_answer, 3))
 
 
@@ -92,13 +92,14 @@ def generate_dataset(
     output_json: str = "data/rft.json",
     checkpoint_file: str = "data/rft_checkpoint.json",
     oversample: int = 20,
-    temperature: float = 0.7,
+    temperature: float = 0.8,
     checkpoint_every: int = 50,
     resume: bool = True,
     min_reasoning_length: int = 20,
     selection_strategy: str = "longest",
     use_gdrive: bool = None,
-    relative_tolerance: float = 0.05,  # NEW: Relative tolerance parameter
+    relative_tolerance: float = 0.05,  
+    model_checkpoint: str = "HuggingFaceTB/SmolLM2-1.7B-Instruct",
 ):
     """
     Generate RFT dataset with Google Drive checkpointing support.
@@ -138,7 +139,7 @@ def generate_dataset(
     
     # Load CoT model
     print("\nLoading CoTModel...")
-    model = CoTModel()
+    model = CoTModel(checkpoint=model_checkpoint)
     
     # Load training data
     print("Loading training dataset...")
