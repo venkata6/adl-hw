@@ -131,7 +131,7 @@ def train_model(
     print("Creating LoRA configuration...")
     lora_config = LoraConfig(
         r=8,
-        lora_alpha=32,
+        lora_alpha=64,
         target_modules="all-linear",
         lora_dropout=0.05,
         bias="none",
