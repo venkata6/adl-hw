@@ -168,8 +168,8 @@ class VQABenchmarkResult:
             if is_correct:
                 correct_count += 1
 
-        print(correct_count)
-        print(len(samples))
+        print(f"{correct_count=}")
+        print(len(f"{samples=}"))
 
         return cls(accuracy=correct_count / len(samples) if samples else 0, samples=samples)
 

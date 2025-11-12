@@ -102,7 +102,16 @@ class CLIP(nn.Module):
         self.vision_encoder = vision_encoder
         self.text_encoder = text_encoder
         # TODO: implement the rest components
-        raise NotImplementedError("Not implemented")
+        #raise NotImplementedError("Not implemented")
+        self.temperature = temperature
+    
+        # Get embedding dimensions from encoders
+        vision_dim = vision_encoder.config.hidden_size
+        text_dim = text_encoder.config.hidden_size
+    
+        # Projection heads to map to common embedding space
+        self.vision_projection = nn.Linear(vision_dim, proj_dim, bias=False)
+        self.text_projection = nn.Linear(text_dim, proj_dim, bias=False)
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
         return self.vision_encoder(image)
@@ -180,7 +189,24 @@ class CLIP(nn.Module):
         Returns:
             TODO: think about the what values should be returned
         """
-        raise NotImplementedError("Not implemented")
+        #raise NotImplementedError("Not implemented")
+        vision_outputs = self.vision_encoder(pixel_values)
+        vision_embeds = vision_outputs.last_hidden_state[:, 0, :]  # CLS token
+        vision_features = self.vision_projection(vision_embeds)
+    
+        # Encode text
+        text_outputs = self.text_encoder(input_ids, attention_mask=attention_mask)
+        text_embeds = text_outputs.last_hidden_state[:, 0, :]  # CLS token
+        text_features = self.text_projection(text_embeds)
+    
+        # Normalize features
+        vision_features = vision_features / vision_features.norm(dim=-1, keepdim=True)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+    
+        # Compute logits (scaled dot product)
+        logits = torch.matmul(vision_features, text_features.T) / self.temperature
+    
+        return vision_features, text_features, logits
 
 
 def compute_clip_loss(
@@ -199,7 +225,18 @@ def compute_clip_loss(
     Returns:
         The loss for the CLIP model.
     """
-    raise NotImplementedError("Not implemented")
+    #raise NotImplementedError("Not implemented")
+    vision_features, text_features, logits = outputs
+    
+    # Create labels: diagonal matrix (image[i] matches text[i])
+    batch_size = logits.shape[0]
+    targets = torch.arange(batch_size, device=logits.device)
+    
+    # Symmetric loss: image-to-text and text-to-image
+    loss_i2t = nn.functional.cross_entropy(logits, targets)
+    loss_t2i = nn.functional.cross_entropy(logits.T, targets)
+    
+    return (loss_i2t + loss_t2i) / 2
 
 
 def get_target_modules_for_lora(model: nn.Module) -> list[str]:

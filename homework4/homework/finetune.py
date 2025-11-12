@@ -263,7 +263,7 @@ def test_model(ckpt_path: str, val_dataset: str = "valid_grader"):
     llm = load(ckpt_path)
 
     benchmark_result = benchmark(llm, testset, 128)
-    print(benchmark_result.accuracy)
+    print(f"{benchmark_result.accuracy=}")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import fire
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageDraw
+import json
 
 # Define object type mapping
 OBJECT_TYPES = {
@@ -151,8 +152,70 @@ def extract_kart_objects(
         - center: (x, y) coordinates of the kart's center
         - is_center_kart: Boolean indicating if this is the kart closest to image center
     """
-
-    raise NotImplementedError("Not implemented")
+    with open(info_path, 'r') as f:
+        info = json.load(f)
+    
+    # Get kart names and detections for this view
+    kart_names = info['karts']
+    detections = info['detections'][view_index]
+    
+    # Calculate image center
+    image_center_x = img_width / 2
+    image_center_y = img_height / 2
+    
+    kart_objects = []
+    
+    # Process each detection
+    for detection in detections:
+        class_id, track_id, x1, y1, x2, y2 = detection
+        
+        # Only process karts (class_id == 1)
+        if int(class_id) != 1:
+            continue
+        
+        # Skip if bbox is too small
+        if (x2 - x1) < min_box_size or (y2 - y1) < min_box_size:
+            continue
+        
+        # Skip if out of bounds
+        if x2 < 0 or x1 > img_width or y2 < 0 or y1 > img_height:
+            continue
+        
+        # Calculate center
+        center_x = (x1 + x2) / 2
+        center_y = (y1 + y2) / 2
+        
+        # track_id == 0 is the ego car
+        is_ego = (int(track_id) == 0)
+        
+        # Get kart name from kart_names array using track_id as index
+        # If track_id is 0 (ego), it might not have a corresponding name in the array
+        kart_name = kart_names[int(track_id)] if int(track_id) < len(kart_names) else f"kart_{track_id}"
+        
+        kart_objects.append({
+            'instance_id': int(track_id),
+            'kart_name': kart_name,
+            'center': (center_x, center_y),
+            'is_ego': is_ego,
+            'is_center_kart': False,
+            'bbox': [x1, y1, x2, y2]
+        })
+    
+    # Find kart closest to center
+    if kart_objects:
+        min_dist = float('inf')
+        center_kart_idx = 0
+        for idx, kart in enumerate(kart_objects):
+            dist = ((kart['center'][0] - image_center_x) ** 2 + 
+                   (kart['center'][1] - image_center_y) ** 2) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                center_kart_idx = idx
+        
+        kart_objects[center_kart_idx]['is_center_kart'] = True
+    
+    return kart_objects
+    #raise NotImplementedError("Not implemented")
 
 
 def extract_track_info(info_path: str) -> str:
@@ -166,7 +229,11 @@ def extract_track_info(info_path: str) -> str:
         Track name as a string
     """
 
-    raise NotImplementedError("Not implemented")
+    #raise NotImplementedError("Not implemented")
+    with open(info_path, 'r') as f:
+        info = json.load(f)
+    
+    return info.get('track', 'unknown')
 
 
 def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img_height: int = 100) -> list:
@@ -202,8 +269,124 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
     # How many karts are in front of the ego car?
     # How many karts are behind the ego car?
 
-    raise NotImplementedError("Not implemented")
+    #raise NotImplementedError("Not implemented")
 
+    karts = extract_kart_objects(info_path, view_index, img_width, img_height)
+    track_name = extract_track_info(info_path)
+    print(f"{track_name=}")
+    
+    qa_pairs = []
+    
+    # Find ego kart
+    ego_kart = None
+    for kart in karts:
+        if kart.get('is_ego', False):
+            ego_kart = kart
+            break
+    
+    # 1. Ego car question
+    if ego_kart:
+        qa_pairs.append({
+            'question': 'What kart is the ego car?',
+            'answer': ego_kart['kart_name']
+        })
+    
+    # 2. Total karts question
+    qa_pairs.append({
+        'question': 'How many karts are there in the scenario?',
+        'answer': str(len(karts))
+    })
+    
+    # 3. Track information question
+    qa_pairs.append({
+        'question': 'What track is this?',
+        'answer': track_name
+    })
+    
+    if ego_kart:
+        ego_x, ego_y = ego_kart['center']
+        
+        # Count karts in different positions
+        left_count = 0
+        right_count = 0
+        front_count = 0
+        behind_count = 0
+        
+        # 4. Relative position questions for each non-ego kart
+        for kart in karts:
+            if kart.get('is_ego', False):
+                continue
+            
+            kart_x, kart_y = kart['center']
+            
+            # Left/Right
+            if kart_x < ego_x - 20:
+                horizontal = "left"
+                left_count += 1
+            elif kart_x > ego_x + 20:
+                horizontal = "right"
+                right_count += 1
+            else:
+                horizontal = "aligned"
+            
+            # Front/Behind (lower y = in front in image space)
+            if kart_y < ego_y - 20:
+                vertical = "in front of"
+                front_count += 1
+            elif kart_y > ego_y + 20:
+                vertical = "behind"
+                behind_count += 1
+            else:
+                vertical = "at the same level as"
+            
+            # Generate relative position questions
+            qa_pairs.append({
+                'question': f'Is {kart["kart_name"]} to the left or right of the ego car?',
+                'answer': horizontal if horizontal != "aligned" else "neither"
+            })
+            
+            qa_pairs.append({
+                'question': f'Is {kart["kart_name"]} in front of or behind the ego car?',
+                'answer': vertical if vertical != "at the same level as" else "neither"
+            })
+            
+            # Combined position
+            if horizontal != "aligned" and vertical != "at the same level as":
+                position = f"{vertical} and to the {horizontal}"
+            elif horizontal != "aligned":
+                position = f"to the {horizontal}"
+            elif vertical != "at the same level as":
+                position = vertical
+            else:
+                position = "at the same position as"
+            
+            qa_pairs.append({
+                'question': f'Where is {kart["kart_name"]} relative to the ego car?',
+                'answer': position
+            })
+        
+        # 5. Counting questions by direction
+        qa_pairs.append({
+            'question': 'How many karts are to the left of the ego car?',
+            'answer': str(left_count)
+        })
+        
+        qa_pairs.append({
+            'question': 'How many karts are to the right of the ego car?',
+            'answer': str(right_count)
+        })
+        
+        qa_pairs.append({
+            'question': 'How many karts are in front of the ego car?',
+            'answer': str(front_count)
+        })
+        
+        qa_pairs.append({
+            'question': 'How many karts are behind the ego car?',
+            'answer': str(behind_count)
+        })
+    
+    return qa_pairs
 
 def check_qa_pairs(info_file: str, view_index: int):
     """
@@ -239,6 +422,56 @@ def check_qa_pairs(info_file: str, view_index: int):
         print(f"A: {qa['answer']}")
         print("-" * 50)
 
+def generate_dataset(
+    data_dir: str = "./data/train",
+    output_file: str = "./data/train/train_qa_pairs.json",
+    max_samples: int = None
+):
+    """Generate QA dataset from all info files."""
+    import json
+    from tqdm import tqdm
+    
+    data_path = Path(data_dir)
+    info_files = sorted(data_path.glob("*_info.json"))
+    print(f"{info_files=}")
+    
+    if max_samples:
+        info_files = info_files[:max_samples]
+    
+    all_qa_pairs = []
+    
+    for info_file in tqdm(info_files, desc="Generating QA pairs"):
+        with open(info_file, 'r') as f:
+            info = json.load(f)
+        
+        #num_views = len(info['views'])
+        num_views = len(info['karts'])
+        base_name = info_file.stem.replace("_info", "")
+        
+        for view_index in range(num_views):
+            image_file = list(data_path.glob(f"{base_name}_{view_index:02d}_im.jpg"))
+            if not image_file:
+                continue
+            
+            qa_pairs = generate_qa_pairs(str(info_file), view_index)
+            
+            for qa in qa_pairs:
+                all_qa_pairs.append({
+                    "image_file": str(image_file[0]),
+                    "question": qa['question'],
+                    "answer": qa['answer'],
+                    "info_file": str(info_file),
+                    "view_index": view_index
+                })
+    
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(output_path, 'w') as f:
+        json.dump(all_qa_pairs, f, indent=2)
+    
+    print(f"\nGenerated {len(all_qa_pairs)} QA pairs")
+    print(f"Saved to: {output_path}")
 
 """
 Usage Example: Visualize QA pairs for a specific file and view:
@@ -249,8 +482,45 @@ You probably need to add additional commands to Fire below.
 
 
 def main():
-    fire.Fire({"check": check_qa_pairs})
+    fire.Fire({
+        "check": check_qa_pairs,
+        "generate": generate_dataset,
+    })
 
 
 if __name__ == "__main__":
     main()
+
+# import json
+# from pathlib import Path
+
+
+# qa_balanced = 'balanced_qa_pairs.json'
+# qa_generated = '_qa_pairs.json'
+
+
+# def main():
+#     qa_b = json.load(open(Path(__file__).parent / qa_balanced))
+#     qa_g= json.load(open(Path(__file__).parent / qa_generated))
+#     print(f"Number of qa_pairs golden: {len(qa_b)}")
+#     print(f"Number of qa_pairs generated: {len(qa_g)}")
+
+#     # if every qa_pair in qa_b also exists in qa_g otherwise print it out
+#     count = 0
+#     correct = 0
+#     for idx, qa in enumerate(qa_b):
+#         found = False
+#         for qb in qa_g:
+#             # print("Comparing: " + str(qb["question"]) + " to " + str(qa["question"]))
+#             if (qb["question"] == qa["question"] and qb["image_file"] == qa["image_file"]):
+#                 found = True
+#                 if qb["answer"] == qa["answer"]:
+#                     correct+=1
+#                 else:
+#                     print(f"Wrong answer: {qb}   \nCorrect answer: {qa['answer']}")
+#                 break
+#         if not found:
+#             print("Not found: ", qa)
+#             count+=1
+#     print(f"Number of qa_pairs missing: {count}  Correct: {correct}")
+# main()
