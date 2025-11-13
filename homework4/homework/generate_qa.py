@@ -133,7 +133,7 @@ def draw_detections(
 
 
 def extract_kart_objects(
-    info_path: str, view_index: int, img_width: int = 150, img_height: int = 100, min_box_size: int = 5
+    info_path: str, view_index: int, img_width: int = 600, img_height: int = 400, min_box_size: int = 5
 ) -> list:
     """
     Extract kart objects from the info.json file, including their center points and identify the center kart.
@@ -142,8 +142,8 @@ def extract_kart_objects(
     Args:
         info_path: Path to the corresponding info.json file
         view_index: Index of the view to analyze
-        img_width: Width of the image (default: 150)
-        img_height: Height of the image (default: 100)
+        img_width: Width of the image (default: 600)
+        img_height: Height of the image (default: 400)
 
     Returns:
         List of kart objects, each containing:
@@ -159,6 +159,10 @@ def extract_kart_objects(
     kart_names = info['karts']
     detections = info['detections'][view_index]
     
+    # Calculate scaling factors (same as draw_detections)
+    scale_x = img_width / ORIGINAL_WIDTH
+    scale_y = img_height / ORIGINAL_HEIGHT
+    
     # Calculate image center
     image_center_x = img_width / 2
     image_center_y = img_height / 2
@@ -173,23 +177,28 @@ def extract_kart_objects(
         if int(class_id) != 1:
             continue
         
-        # Skip if bbox is too small
-        if (x2 - x1) < min_box_size or (y2 - y1) < min_box_size:
+        # Scale coordinates to fit the current image size (same as draw_detections)
+        x1_scaled = x1 * scale_x
+        y1_scaled = y1 * scale_y
+        x2_scaled = x2 * scale_x
+        y2_scaled = y2 * scale_y
+        
+        # Skip if bounding box is too small (same as draw_detections)
+        if (x2_scaled - x1_scaled) < min_box_size or (y2_scaled - y1_scaled) < min_box_size:
             continue
         
-        # Skip if out of bounds
-        if x2 < 0 or x1 > img_width or y2 < 0 or y1 > img_height:
+        # Skip if out of bounds (same as draw_detections)
+        if x2_scaled < 0 or x1_scaled > img_width or y2_scaled < 0 or y1_scaled > img_height:
             continue
         
-        # Calculate center
-        center_x = (x1 + x2) / 2
-        center_y = (y1 + y2) / 2
+        # Calculate center using scaled coordinates
+        center_x = (x1_scaled + x2_scaled) / 2
+        center_y = (y1_scaled + y2_scaled) / 2
         
         # track_id == 0 is the ego car
         is_ego = (int(track_id) == 0)
         
         # Get kart name from kart_names array using track_id as index
-        # If track_id is 0 (ego), it might not have a corresponding name in the array
         kart_name = kart_names[int(track_id)] if int(track_id) < len(kart_names) else f"kart_{track_id}"
         
         kart_objects.append({
@@ -198,7 +207,7 @@ def extract_kart_objects(
             'center': (center_x, center_y),
             'is_ego': is_ego,
             'is_center_kart': False,
-            'bbox': [x1, y1, x2, y2]
+            'bbox': [x1_scaled, y1_scaled, x2_scaled, y2_scaled]
         })
     
     # Find kart closest to center
@@ -236,7 +245,7 @@ def extract_track_info(info_path: str) -> str:
     return info.get('track', 'unknown')
 
 
-def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img_height: int = 100) -> list:
+def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 600, img_height: int = 400) -> list:
     """
     Generate question-answer pairs for a given view.
 
@@ -273,7 +282,7 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
 
     karts = extract_kart_objects(info_path, view_index, img_width, img_height)
     track_name = extract_track_info(info_path)
-    print(f"{track_name=}")
+    #print(f"{track_name=}")
     
     qa_pairs = []
     
@@ -385,7 +394,7 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 150, img
             'question': 'How many karts are behind the ego car?',
             'answer': str(behind_count)
         })
-    
+    #print(f"{qa_pairs=}")
     return qa_pairs
 
 def check_qa_pairs(info_file: str, view_index: int):
@@ -454,14 +463,16 @@ def generate_dataset(
                 continue
             
             qa_pairs = generate_qa_pairs(str(info_file), view_index)
-            
+
+            path = str(image_file[0])
+            cleaned_path = path.replace("data/", "", 1)
+            #print(cleaned_path)
+
             for qa in qa_pairs:
                 all_qa_pairs.append({
-                    "image_file": str(image_file[0]),
+                    "image_file": cleaned_path,
                     "question": qa['question'],
                     "answer": qa['answer'],
-                    "info_file": str(info_file),
-                    "view_index": view_index
                 })
     
     output_path = Path(output_file)
@@ -491,36 +502,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-# import json
-# from pathlib import Path
-
-
-# qa_balanced = 'balanced_qa_pairs.json'
-# qa_generated = '_qa_pairs.json'
-
-
-# def main():
-#     qa_b = json.load(open(Path(__file__).parent / qa_balanced))
-#     qa_g= json.load(open(Path(__file__).parent / qa_generated))
-#     print(f"Number of qa_pairs golden: {len(qa_b)}")
-#     print(f"Number of qa_pairs generated: {len(qa_g)}")
-
-#     # if every qa_pair in qa_b also exists in qa_g otherwise print it out
-#     count = 0
-#     correct = 0
-#     for idx, qa in enumerate(qa_b):
-#         found = False
-#         for qb in qa_g:
-#             # print("Comparing: " + str(qb["question"]) + " to " + str(qa["question"]))
-#             if (qb["question"] == qa["question"] and qb["image_file"] == qa["image_file"]):
-#                 found = True
-#                 if qb["answer"] == qa["answer"]:
-#                     correct+=1
-#                 else:
-#                     print(f"Wrong answer: {qb}   \nCorrect answer: {qa['answer']}")
-#                 break
-#         if not found:
-#             print("Not found: ", qa)
-#             count+=1
-#     print(f"Number of qa_pairs missing: {count}  Correct: {correct}")
-# main()
