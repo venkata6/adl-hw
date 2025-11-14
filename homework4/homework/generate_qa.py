@@ -132,7 +132,7 @@ def draw_detections(
     return np.array(pil_image)
 
 
-def extract_kart_objects(
+def extract_kart_objects( image_file: str,
     info_path: str, view_index: int, img_width: int = 600, img_height: int = 400, min_box_size: int = 5
 ) -> list:
     """
@@ -155,6 +155,12 @@ def extract_kart_objects(
     with open(info_path, 'r') as f:
         info = json.load(f)
     
+    # Get image dimensions
+    pil_image = Image.open(image_file)
+    img_width, img_height = pil_image.size
+
+    #print(f"{view_index=}")
+
     # Get kart names and detections for this view
     kart_names = info['karts']
     detections = info['detections'][view_index]
@@ -171,17 +177,21 @@ def extract_kart_objects(
     
     # Process each detection
     for detection in detections:
-        class_id, track_id, x1, y1, x2, y2 = detection
         
+        class_id, track_id, x1, y1, x2, y2 = detection
+
+        class_id = int(class_id)
+        track_id = int(track_id)
+
         # Only process karts (class_id == 1)
         if int(class_id) != 1:
             continue
         
         # Scale coordinates to fit the current image size (same as draw_detections)
-        x1_scaled = x1 * scale_x
-        y1_scaled = y1 * scale_y
-        x2_scaled = x2 * scale_x
-        y2_scaled = y2 * scale_y
+        x1_scaled = int(x1 * scale_x)
+        y1_scaled = int(y1 * scale_y)
+        x2_scaled = int(x2 * scale_x)
+        y2_scaled = int(y2 * scale_y)
         
         # Skip if bounding box is too small (same as draw_detections)
         if (x2_scaled - x1_scaled) < min_box_size or (y2_scaled - y1_scaled) < min_box_size:
@@ -195,22 +205,19 @@ def extract_kart_objects(
         center_x = (x1_scaled + x2_scaled) / 2
         center_y = (y1_scaled + y2_scaled) / 2
         
-        # track_id == 0 is the ego car
-        is_ego = (int(track_id) == 0)
-        
         # Get kart name from kart_names array using track_id as index
         kart_name = kart_names[int(track_id)] if int(track_id) < len(kart_names) else f"kart_{track_id}"
-        
+        #print(f"{kart_name=} {[x1_scaled, y1_scaled, x2_scaled, y2_scaled]=}")
         kart_objects.append({
             'instance_id': int(track_id),
             'kart_name': kart_name,
             'center': (center_x, center_y),
-            'is_ego': is_ego,
+            'is_ego': False,  # Will be set below
             'is_center_kart': False,
             'bbox': [x1_scaled, y1_scaled, x2_scaled, y2_scaled]
         })
     
-    # Find kart closest to center
+    # Find kart closest to center - THIS IS THE EGO KART
     if kart_objects:
         min_dist = float('inf')
         center_kart_idx = 0
@@ -221,9 +228,12 @@ def extract_kart_objects(
                 min_dist = dist
                 center_kart_idx = idx
         
+        # Mark the center kart as both center kart AND ego kart
         kart_objects[center_kart_idx]['is_center_kart'] = True
-    
+        kart_objects[center_kart_idx]['is_ego'] = True
+    #print(f"{kart_objects}")
     return kart_objects
+
     #raise NotImplementedError("Not implemented")
 
 
@@ -279,8 +289,11 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 600, img
     # How many karts are behind the ego car?
 
     #raise NotImplementedError("Not implemented")
+    info_path = Path(info_path)
+    base_name = info_path.stem.replace("_info", "")
+    image_file = list(info_path.parent.glob(f"{base_name}_{view_index:02d}_im.jpg"))[0]
 
-    karts = extract_kart_objects(info_path, view_index, img_width, img_height)
+    karts = extract_kart_objects(str(image_file),info_path, view_index, img_width, img_height)
     track_name = extract_track_info(info_path)
     #print(f"{track_name=}")
     
@@ -292,7 +305,7 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 600, img
         if kart.get('is_ego', False):
             ego_kart = kart
             break
-    
+    #print(f"{ego_kart=}")
     # 1. Ego car question
     if ego_kart:
         qa_pairs.append({
@@ -314,41 +327,55 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 600, img
     
     if ego_kart:
         ego_x, ego_y = ego_kart['center']
+        ego_bbox = ego_kart['bbox']  # [x1, y1, x2, y2]
+        ego_back = ego_bbox[3]   # y2 - bottom of ego kart
         
         # Count karts in different positions
         left_count = 0
         right_count = 0
         front_count = 0
         behind_count = 0
+
+        HORIZONTAL_THRESHOLD = 0  # Increased from 20
+        VERTICAL_THRESHOLD = 0    # Increased from 20
+    
         
         # 4. Relative position questions for each non-ego kart
         for kart in karts:
             if kart.get('is_ego', False):
                 continue
-            
+            kart_bbox = kart['bbox']     # [x1, y1, x2, y2]
+            kart_back = kart_bbox[3]  # y2 - bottom of kart
+            # print({kart["kart_name"]})
+            # print(f"{ego_bbox=}") 
+            # print(f"{kart_bbox=}") 
+            # print(f"{ego_back=}")
+            # print(f"{kart_back=}")
             kart_x, kart_y = kart['center']
-            
-            # Left/Right
-            if kart_x < ego_x - 20:
+            if kart_x < ego_x - HORIZONTAL_THRESHOLD:
                 horizontal = "left"
                 left_count += 1
-            elif kart_x > ego_x + 20:
+            elif kart_x > ego_x + HORIZONTAL_THRESHOLD:
                 horizontal = "right"
                 right_count += 1
             else:
                 horizontal = "aligned"
-            
+        
             # Front/Behind (lower y = in front in image space)
-            if kart_y < ego_y - 20:
-                vertical = "in front of"
+            if kart_y < ego_y - VERTICAL_THRESHOLD:
+                vertical = "front"
                 front_count += 1
-            elif kart_y > ego_y + 20:
-                vertical = "behind"
+            elif kart_y > ego_y + VERTICAL_THRESHOLD:
+                vertical = "back"
                 behind_count += 1
             else:
                 vertical = "at the same level as"
-            
-            # Generate relative position questions
+                # Generate relative position questions
+
+            if kart_back > ego_back + VERTICAL_THRESHOLD:
+                vertical = "back"
+                #behind_count += 1
+
             qa_pairs.append({
                 'question': f'Is {kart["kart_name"]} to the left or right of the ego car?',
                 'answer': horizontal if horizontal != "aligned" else "neither"
@@ -360,13 +387,32 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 600, img
             })
             
             # Combined position
-            if horizontal != "aligned" and vertical != "at the same level as":
-                position = f"{vertical} and to the {horizontal}"
-            elif horizontal != "aligned":
-                position = f"to the {horizontal}"
+            # if horizontal != "aligned" and vertical != "at the same level as":
+            #     position = f"{vertical} and {horizontal}"
+            # elif horizontal != "aligned":
+            #     position = f"{horizontal}"
+            # elif vertical != "at the same level as":
+            #     position = vertical
+            # else:
+            #     position = "at the same position as"
+            # print({kart["kart_name"]})
+            # print(f"{vertical=}")
+            # print(f"{horizontal=}")
+            # print(f"Kart: {kart['kart_name']}, Center: ({kart_x:.2f}, {kart_y:.2f})")
+            # print(f"Ego: ({ego_x:.2f}, {ego_y:.2f})")
+            # print(f"Delta X: {kart_x - ego_x:.2f}, Delta Y: {kart_y - ego_y:.2f}")
+
+            if vertical != "at the same level as" and horizontal != "aligned":
+                # Both directions: "back and left", "in front of and right", etc.
+                position = f"{vertical} and {horizontal}"
             elif vertical != "at the same level as":
+                # Only vertical: "back", "in front of"
                 position = vertical
+            elif horizontal != "aligned":
+                # Only horizontal: "to the left", "to the right"
+                position = f"{horizontal}"
             else:
+                # Neither (shouldn't happen for non-ego karts)
                 position = "at the same position as"
             
             qa_pairs.append({
@@ -442,7 +488,7 @@ def generate_dataset(
     
     data_path = Path(data_dir)
     info_files = sorted(data_path.glob("*_info.json"))
-    print(f"{info_files=}")
+    #print(f"{info_files=}")
     
     if max_samples:
         info_files = info_files[:max_samples]
@@ -454,10 +500,12 @@ def generate_dataset(
             info = json.load(f)
         
         #num_views = len(info['views'])
-        num_views = len(info['karts'])
+        #num_views = len(info['karts'])
+        num_views = len(info['detections'])
         base_name = info_file.stem.replace("_info", "")
         
         for view_index in range(num_views):
+            #if ( f"{base_name}_{view_index:02d}_im.jpg")
             image_file = list(data_path.glob(f"{base_name}_{view_index:02d}_im.jpg"))
             if not image_file:
                 continue
