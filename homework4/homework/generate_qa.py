@@ -414,7 +414,7 @@ def generate_qa_pairs(info_path: str, view_index: int, img_width: int = 600, img
             else:
                 # Neither (shouldn't happen for non-ego karts)
                 position = "at the same position as"
-            
+                        
             qa_pairs.append({
                 'question': f'Where is {kart["kart_name"]} relative to the ego car?',
                 'answer': position
