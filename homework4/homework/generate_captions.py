@@ -259,7 +259,7 @@ def check_caption(info_file: str, view_index: int):
 
 
 def generate_dataset(
-    data_dir: str = "data/valid",
+    data_dir: str = "data/train",
     max_samples: int = None
 ):
     """
