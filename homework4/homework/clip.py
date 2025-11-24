@@ -256,8 +256,8 @@ def get_target_modules_for_lora(model: nn.Module) -> list[str]:
 def train(
     data_dir: Path | None = None,
     output_dir: str = "clip",
-    num_train_epochs: float = 0.05,  # for debugging purpose, increase this once the dry run works
-    per_device_train_batch_size: int = 1024,
+    num_train_epochs: float = 2,  # for debugging purpose, increase this once the dry run works
+    per_device_train_batch_size: int = 256,#1024,
     gradient_accumulation_steps: int = 1,
     learning_rate: float = 5e-4,
     num_workers: int = 16,
@@ -336,16 +336,16 @@ def train(
     return model, processor
 
 
-def demo_train():
-    train(
-        train_dataset_name="train_demo",
-        output_dir="demo_clip",
-        num_train_epochs=1,
-        per_device_train_batch_size=2,
-        num_workers=1,
-        gradient_accumulation_steps=1,
-        learning_rate=5e-4,
-    )
+# def demo_train():
+#     train(
+#         train_dataset_name="train_demo",
+#         output_dir="demo_clip",
+#         num_train_epochs=1,
+#         per_device_train_batch_size=2,
+#         num_workers=1,
+#         gradient_accumulation_steps=1,
+#         learning_rate=5e-4,
+#     )
 
 
 def test(ckpt_path: str, val_dataset: str = "valid_grader"):
