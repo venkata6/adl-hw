@@ -517,6 +517,8 @@ def generate_dataset(
             #print(cleaned_path)
 
             for qa in qa_pairs:
+                if qa['answer'] == '0':
+                    continue
                 all_qa_pairs.append({
                     "image_file": cleaned_path,
                     "question": qa['question'],

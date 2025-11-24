@@ -7,119 +7,107 @@ from .generate_qa import draw_detections, extract_frame_info, extract_kart_objec
 import json
 import random
 
-# # Helper function to determine position using the Cone of Vision logic
-# def get_cone_of_vision_position(kart_center, ego_center, horizontal_threshold=0):
-#     #print("in get_cone_of_vision_position ")
-#     k_x, k_y = kart_center
-#     e_x, e_y = ego_center
+def get_edge_distances(kart_bbox, ego_bbox):
+    """
+    Calculate edge-to-edge distances in horizontal and vertical directions.
+    
+    Args:
+        kart_bbox: [x1, y1, x2, y2] bounding box of the kart
+        ego_bbox: [x1, y1, x2, y2] bounding box of the ego car
+    
+    Returns:
+        tuple: (horizontal_distance, vertical_distance, dominant_direction)
+        where dominant_direction is "horizontal" or "vertical"
+    """
+    kart_x1, kart_y1, kart_x2, kart_y2 = kart_bbox
+    ego_x1, ego_y1, ego_x2, ego_y2 = ego_bbox
+    
+    # Horizontal distance (gap between boxes on x-axis)
+    if kart_x2 < ego_x1:
+        # Kart is completely to the left
+        h_distance = ego_x1 - kart_x2
+    elif kart_x1 > ego_x2:
+        # Kart is completely to the right
+        h_distance = kart_x1 - ego_x2
+    else:
+        # Boxes overlap horizontally
+        h_distance = 0
+    
+    # Vertical distance (gap between boxes on y-axis)
+    if kart_y2 < ego_y1:
+        # Kart is completely above (in front of)
+        v_distance = ego_y1 - kart_y2
+    elif kart_y1 > ego_y2:
+        # Kart is completely below (behind)
+        v_distance = kart_y1 - ego_y2
+    else:
+        # Boxes overlap vertically
+        v_distance = 0
+    
+    # Determine dominant direction
+    dominant_direction = "horizontal" if h_distance > v_distance else "vertical"
+    
+    return h_distance, v_distance, dominant_direction
 
-#     # A simple way to define the cone is by using a slope/ratio.
-#     # SLOPE_RATIO = how many pixels horizontally (dx) equals 1 pixel vertically (dy).
-#     # A smaller ratio creates a narrower cone (stricter "Front" definition).
-#     # We use 0.5: for every 100 pixels forward (dy), the cone is 50 pixels wide (dx).
-#     SLOPE_RATIO = 0.5
+def get_non_overlapping_area(kart_bbox, ego_bbox):
+    """
+    Calculate non-overlapping areas in horizontal and vertical directions.
     
-#     # 1. Calculate relative differences
-#     dx = k_x - e_x # Lateral displacement
-#     dy = e_y - k_y # Vertical displacement (positive means object is HIGHER than ego car, i.e., "forward")
-
-#     # 2. Horizontal Label (Left/Right)
-#     if dx < -horizontal_threshold:
-#         horizontal = "left"
-#     elif dx > horizontal_threshold:
-#         horizontal = "right"
-#     else:
-#         horizontal = "aligned"
-        
-#     # 3. Vertical Label (Front/Behind/Side)
-
-#     # Calculate the maximum allowed horizontal distance to still be considered "Front"
-#     # This is the width of the cone at the target's vertical level.
-#     cone_width_at_y = dy * SLOPE_RATIO
+    Args:
+        kart_bbox: [x1, y1, x2, y2] bounding box of the kart
+        ego_bbox: [x1, y1, x2, y2] bounding box of the ego car
     
-#     # Check if the target is significantly behind the ego (should be rare/impossible in FPV)
-#     if dy < -100: # Significantly below the ego car center (y-value is greater)
-#         vertical = "behind"
-#         return f"far behind and to the {horizontal} of"
-
-#     # Check the "Front" cone
-#     elif dy > 20: # Must be at least 20 pixels 'in front' (up) to check the cone
-#         if abs(dx) < cone_width_at_y:
-#             # If the side distance is smaller than the cone width, it's "in front"
-#             vertical = "in front of"
-#         else:
-#             # If it's outside the cone, it's "to the side"
-#             vertical = "alongside" 
-#     else:
-#         # Close to the same Y-level (or too small a difference to tell)
-#         vertical = "alongside" 
-        
-#     # 4. Combine and return the most salient dimension
-
-#     # If it's clearly defined as 'in front of', we prioritize that.
-#     if vertical == "in front of":
-#         if horizontal != "aligned":
-#             return f"is slightly to the {horizontal} and in front of"
-#         return "directly in front of"
+    Returns:
+        tuple: (horizontal_area, vertical_area, dominant_direction)
+        where dominant_direction is "horizontal" or "vertical"
+    """
+    kart_x1, kart_y1, kart_x2, kart_y2 = kart_bbox
+    ego_x1, ego_y1, ego_x2, ego_y2 = ego_bbox
     
-#     # If it's not "in front of", we prioritize the horizontal position (Left/Right).
-#     elif horizontal != "aligned":
-#         # The answer for the 'Konqi' problem ("left and not front") would fall here.
-#         return f"{horizontal} of"
+    # Calculate overlap region
+    overlap_x1 = max(kart_x1, ego_x1)
+    overlap_x2 = min(kart_x2, ego_x2)
+    overlap_y1 = max(kart_y1, ego_y1)
+    overlap_y2 = min(kart_y2, ego_y2)
     
-#     return "at the same position as"
-
-# def get_cone_of_vision_position(kart_center, ego_center, horizontal_threshold=0):
-#     k_x, k_y = kart_center
-#     e_x, e_y = ego_center
+    # Check if there's any overlap
+    has_horizontal_overlap = overlap_x2 > overlap_x1
+    has_vertical_overlap = overlap_y2 > overlap_y1
+    #print(f"{has_horizontal_overlap=},{has_vertical_overlap=}")
+    if ( has_horizontal_overlap == True and has_vertical_overlap==True):
+        bbox_overlap=True
+    else:
+        bbox_overlap=False
+    # Calculate kart dimensions
+    kart_width = kart_x2 - kart_x1
+    kart_height = kart_y2 - kart_y1
     
-#     # Calculate relative differences
-#     dx = k_x - e_x  # Lateral displacement
-#     dy = e_y - k_y  # Vertical displacement (positive = kart is higher/forward)
+    # Calculate non-overlapping horizontal area
+    if has_horizontal_overlap:
+        # Subtract overlapping width
+        overlap_width = overlap_x2 - overlap_x1
+        non_overlap_width = kart_width - overlap_width
+    else:
+        # No horizontal overlap, full width is non-overlapping
+        non_overlap_width = kart_width
     
-#     # Calculate distances
-#     h_distance = abs(dx)
-#     v_distance = abs(dy)
+    horizontal_area = non_overlap_width * kart_height
     
-#     # Determine horizontal position
-#     if dx < -horizontal_threshold:
-#         horizontal = "to the left of"
-#     elif dx > horizontal_threshold:
-#         horizontal = "to the right of"
-#     else:
-#         horizontal = "aligned with"
+    # Calculate non-overlapping vertical area
+    if has_vertical_overlap:
+        # Subtract overlapping height
+        overlap_height = overlap_y2 - overlap_y1
+        non_overlap_height = kart_height - overlap_height
+    else:
+        # No vertical overlap, full height is non-overlapping
+        non_overlap_height = kart_height
     
-#     # Determine vertical position with better thresholds
-#     FORWARD_THRESHOLD = 20   # Must be at least 20px up to be "in front"
-#     BEHIND_THRESHOLD = 20    # Must be at least 20px down to be "behind"
+    vertical_area = kart_width * non_overlap_height
     
-#     if dy > FORWARD_THRESHOLD:
-#         vertical = "in front of"
-#     elif dy < -BEHIND_THRESHOLD:  # Changed from -100 to -20
-#         vertical = "behind"
-#     else:
-#         vertical = "alongside"
+    # Determine dominant direction
+    dominant_direction = "horizontal" if horizontal_area > vertical_area else "vertical"
     
-#     # Priority logic: choose the most significant dimension
-    
-#     # If clearly in front or behind, use that
-#     if vertical == "in front of":
-#         if horizontal != "aligned with" and h_distance > v_distance:
-#             # Horizontal distance is greater - prioritize horizontal
-#             return horizontal
-#         return vertical
-    
-#     elif vertical == "behind":
-#         if horizontal != "aligned with" and h_distance > v_distance:
-#             # Horizontal distance is greater - prioritize horizontal
-#             return horizontal
-#         return vertical
-    
-#     # Alongside - use horizontal position
-#     elif horizontal != "aligned with":
-#         return horizontal
-    
-#     return "at the same position as"
+    return horizontal_area, vertical_area, dominant_direction,bbox_overlap
 
 
 def generate_captions(info_path: str, view_index: int, img_width: int = 600, img_height: int = 400) -> list:
@@ -161,7 +149,7 @@ def generate_captions(info_path: str, view_index: int, img_width: int = 600, img
     # 3. Track name caption
     all_captions.append(f"The track is {track_name}.")
     
-    # 4. Relative position captions
+    #4. Relative position captions
     if ego_kart:
         ego_x, ego_y = ego_kart['center']
         ego_bbox = ego_kart['bbox']
@@ -175,12 +163,20 @@ def generate_captions(info_path: str, view_index: int, img_width: int = 600, img
             kart_bbox = kart['bbox']
             kart_back = kart_bbox[3]  # y2 - bottom of kart
             kart_x, kart_y = kart['center']
-            
+
+            h_area, v_area, dominant, bbox_overlap = get_non_overlapping_area(kart_bbox, ego_bbox)
+            he_area, ve_area, edominant = get_edge_distances(kart_bbox, ego_bbox)
+            #print(f"{he_area=},{ve_area=},{edominant=}")
+
+             # Calculate signed differences
+            dx = abs(kart_x - ego_x)  # Positive = right, Negative = left
+            dy = abs(ego_y - kart_y)  # Positive = in front (higher in image)
+
+            #print(f"{dy=},{dx=},{h_area=},{v_area=},{dominant=},{kart['kart_name']=} ")
+
             # Calculate distances
             h_distance = abs(kart_x - ego_x)
             v_distance = abs(kart_y - ego_y)
-            
-            SLOPE_RATIO = 0.1# Start with 0.6 for a moderate cone.
             
             # Determine horizontal position
             if kart_x < ego_x:
@@ -194,42 +190,54 @@ def generate_captions(info_path: str, view_index: int, img_width: int = 600, img
             else:
                 vertical = "behind"
             
-            # Override: if kart's bottom is below ego's bottom, it's behind
-            
             if kart_back > ego_back:
                 vertical = "behind"
                 # Recalculate v_distance using back edges
                 v_distance = abs(kart_back - ego_back)
             
             # Choose the dimension with greater distance
-            if h_distance > v_distance:
-                position = horizontal
+            SLOPE_RATIO = 0.1 # Start with 0.6 for a moderate cone.
+            if (kart_back > ego_back):
+                position = "behind"
             else:
+                position = horizontal
+            if ( v_distance > h_distance * SLOPE_RATIO):
                 position = vertical
-
-        # 2. Check for the definitive "Behind" case
-        # If the kart's bottom edge is below the ego's bottom edge, it is 100% behind.
+            elif h_distance > v_distance or (dominant == 'horizontal') \
+                or (edominant == 'horizontal') :
+                position = horizontal 
+            else:
+                position = horizontal
+            
             if kart_back > ego_back:
                 #print(f"hello {position}")
                 position = position
-            
-            
-       
-        # 3. Check for the definitive "In Front" case using the Cone Ratio
-        # A kart is "In Front" if the vertical distance (forward) is SIGNIFICANTLY
-        # greater than the lateral distance (side), relative to the cone slope.
-        # Condition: v_distance > h_distance * SLOPE_RATIO
-            elif v_distance > h_distance * SLOPE_RATIO:
-                #print("slope ratio called {kart['kart_name']}")
-                position = vertical # Should be "in front of" or "behind" (but behind is handled above)
-            
-        # 4. Otherwise, prioritize the horizontal position (Left/Right)
             else:
-            # This is the "Alongside" or "Outside the Cone" case.
-                #print(f"default {kart['kart_name']} {horizontal} ")
                 position = horizontal
+            #print(f"{horizontal=},{h_distance=},{v_distance=}")
+            #print(f"{kart_back=},{ego_back=}")
+                 
+            if ( dy < dx and (dominant == 'horizontal')):
+                if (h_distance > v_distance ):
+                    position = horizontal
+                else:
+                    position = vertical
             
-            all_captions.append(f"{kart['kart_name']} is {position} the ego car.")
+            if ( ego_back - kart_back >= 15 and (v_area == 0)):
+                position = vertical
+            # if ( bbox_overlap == False ):
+            #     position = vertical
+            # if ( he_area == 0 and ve_area == 0 and edominant == 'vertical' ):
+            #     if (h_area - v_area > 40):
+            #         position = horizontal
+            #     else:    
+            #         position = vertical
+                
+
+# Replace the relative position caption generation loop in generate_captions()
+# Find this section and replace it:             
+
+            all_captions.append(f"{kart['kart_name']} is {position} the ego car.")        
     
     return all_captions
 

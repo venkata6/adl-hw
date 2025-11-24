@@ -344,7 +344,7 @@ def demo_train():
         per_device_train_batch_size=2,
         num_workers=1,
         gradient_accumulation_steps=1,
-        learning_rate=1e-8,
+        learning_rate=5e-4,
     )
 
 
