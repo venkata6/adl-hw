@@ -200,7 +200,8 @@ class CLIP(nn.Module):
         # T_f = text_encoder(T)
         text_outputs = self.text_encoder(input_ids, attention_mask=attention_mask)
         #T_f = text_outputs.last_hidden_state[:, 0, :]  # [n, d_t]
-        mask = attention_mask.unsqueeze(-1).float()
+        #mask = attention_mask.unsqueeze(-1).float()
+        mask = attention_mask.unsqueeze(-1).to(torch.bfloat16)
         masked_hidden = text_outputs.last_hidden_state * mask
         sum_hidden = masked_hidden.sum(dim=1)
         sum_mask = mask.sum(dim=1).clamp(min=1e-9)
