@@ -103,13 +103,14 @@ class CLIP(nn.Module):
         self.text_encoder = text_encoder
         # TODO: implement the rest components
         #raise NotImplementedError("Not implemented")
-        self.temperature = temperature
+       # Learnable temperature parameter (log scale)
+        self.logit_scale = nn.Parameter(torch.ones([]) * torch.log(torch.tensor(1 / temperature)))
     
         # Get embedding dimensions from encoders
         vision_dim = vision_encoder.config.hidden_size
         text_dim = text_encoder.config.hidden_size
     
-        # Projection heads to map to common embedding space
+        # Projection heads to map to common embedding space (W_i and W_t)
         self.vision_projection = nn.Linear(vision_dim, proj_dim, bias=False)
         self.text_projection = nn.Linear(text_dim, proj_dim, bias=False)
 
@@ -190,73 +191,30 @@ class CLIP(nn.Module):
             TODO: think about the what values should be returned
         """
         #raise NotImplementedError("Not implemented")
+        # Extract feature representations of each modality
+        # I_f = image_encoder(I)
         vision_outputs = self.vision_encoder(pixel_values)
-        vision_embeds = vision_outputs.last_hidden_state[:, 0, :]  # CLS token
-        vision_features = self.vision_projection(vision_embeds)
-    
-        # Encode text
+        I_f = vision_outputs.last_hidden_state[:, 0, :]  # [n, d_i]
+        
+        # T_f = text_encoder(T)
         text_outputs = self.text_encoder(input_ids, attention_mask=attention_mask)
-        text_embeds = text_outputs.last_hidden_state[:, 0, :]  # CLS token
-        text_features = self.text_projection(text_embeds)
+        T_f = text_outputs.last_hidden_state[:, 0, :]  # [n, d_t]
     
-        # Normalize features
-        vision_features = vision_features / vision_features.norm(dim=-1, keepdim=True)
-        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        # Joint multimodal embedding [n, d_e]
+        # I_e = l2_normalize(np.dot(I_f, W_i), axis=1)
+        I_e = self.vision_projection(I_f)
+        I_e = I_e / I_e.norm(dim=-1, keepdim=True)  # L2 normalize
+        
+        # T_e = l2_normalize(np.dot(T_f, W_t), axis=1)
+        T_e = self.text_projection(T_f)
+        T_e = T_e / T_e.norm(dim=-1, keepdim=True)  # L2 normalize
     
-        # Compute logits (scaled dot product)
-        logits = torch.matmul(vision_features, text_features.T) / self.temperature
+        # Scaled pairwise cosine similarities [n, n]
+        # logits = np.dot(I_e, T_e.T) * np.exp(t)
+        logit_scale = self.logit_scale.exp()
+        logits = torch.matmul(I_e, T_e.T) * logit_scale
     
-        return vision_features, text_features, logits
-    
-
-    # def forward(
-    #     self,
-    #     pixel_values: torch.Tensor,
-    #     input_ids: torch.Tensor,
-    #     attention_mask: torch.Tensor = None,
-    #     labels: torch.Tensor = None,
-    #     **kwargs,
-    # ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        
-    #     # --- 1. VISION ENCODER (Image Average Pooling) ---
-    #     vision_outputs = self.vision_encoder(pixel_values)
-        
-    #     # Use Mean Pooling: Average all patch embeddings across the sequence dimension (dim=1)
-    #     # We exclude the CLS token (index 0) if it is still present and not relevant for average pooling.
-    #     # However, for simplicity and compatibility, we average all tokens including CLS for ViT.
-    #     vision_embeds = vision_outputs.last_hidden_state.mean(dim=1) # Average over all tokens/patches
-    #     vision_features = self.vision_projection(vision_embeds)
-    
-    #     # --- 2. TEXT ENCODER (Masked Average Pooling) ---
-    #     text_outputs = self.text_encoder(input_ids, attention_mask=attention_mask)
-        
-    #     # Get hidden states (Shape: B x L x D)
-    #     hidden_states = text_outputs.last_hidden_state
-        
-    #     # Implement Masked Mean Pooling: Only average non-padding tokens
-    #     # The attention mask has shape (B, L); expand it to (B, L, 1)
-    #     mask = attention_mask.unsqueeze(-1).float() 
-        
-    #     # 1. Mask the hidden states: Set padded tokens' embeddings to zero
-    #     masked_hidden_states = hidden_states * mask 
-        
-    #     # 2. Sum the valid embeddings across the sequence dimension (L)
-    #     sum_hidden_states = masked_hidden_states.sum(dim=1) 
-        
-    #     # 3. Get the true length (sum of the mask)
-    #     sum_mask = mask.sum(dim=1, keepdim=True) 
-        
-    #     # 4. Final Average (prevent division by zero)
-    #     text_embeds = sum_hidden_states / torch.clamp(sum_mask, min=1e-9)
-    #     text_features = self.text_projection(text_embeds)
-    
-    #     # --- 3. NORMALIZATION AND LOGITS (Unchanged) ---
-    #     vision_features = vision_features / vision_features.norm(dim=-1, keepdim=True)
-    #     text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-    
-    #     logits = torch.matmul(vision_features, text_features.T) / self.temperature
-    
-    #     return vision_features, text_features, logits
+        return I_e, T_e, logits
 
 
 def compute_clip_loss(
@@ -276,17 +234,23 @@ def compute_clip_loss(
         The loss for the CLIP model.
     """
     #raise NotImplementedError("Not implemented")
-    vision_features, text_features, logits = outputs
+    I_e, T_e, logits = outputs
     
-    # Create labels: diagonal matrix (image[i] matches text[i])
+    # Symmetric loss function
+    # labels = np.arange(n)
     batch_size = logits.shape[0]
     targets = torch.arange(batch_size, device=logits.device)
     
-    # Symmetric loss: image-to-text and text-to-image
-    loss_i2t = nn.functional.cross_entropy(logits, targets)
-    loss_t2i = nn.functional.cross_entropy(logits.T, targets)
+    # loss_i = cross_entropy_loss(logits, labels, axis=0)
+    loss_i = nn.functional.cross_entropy(logits, targets)
     
-    return (loss_i2t + loss_t2i) / 2
+    # loss_t = cross_entropy_loss(logits, labels, axis=1)
+    loss_t = nn.functional.cross_entropy(logits.T, targets)
+    
+    # loss = (loss_i + loss_t)/2
+    loss = (loss_i + loss_t) / 2
+    
+    return loss
 
 
 def get_target_modules_for_lora(model: nn.Module) -> list[str]:
