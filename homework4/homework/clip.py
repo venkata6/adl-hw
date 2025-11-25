@@ -194,11 +194,17 @@ class CLIP(nn.Module):
         # Extract feature representations of each modality
         # I_f = image_encoder(I)
         vision_outputs = self.vision_encoder(pixel_values)
-        I_f = vision_outputs.last_hidden_state[:, 0, :]  # [n, d_i]
+        #I_f = vision_outputs.last_hidden_state[:, 0, :]  # [n, d_i]
+        I_f = vision_outputs.last_hidden_state.mean(dim=1)
         
         # T_f = text_encoder(T)
         text_outputs = self.text_encoder(input_ids, attention_mask=attention_mask)
-        T_f = text_outputs.last_hidden_state[:, 0, :]  # [n, d_t]
+        #T_f = text_outputs.last_hidden_state[:, 0, :]  # [n, d_t]
+        mask = attention_mask.unsqueeze(-1).float()
+        masked_hidden = text_outputs.last_hidden_state * mask
+        sum_hidden = masked_hidden.sum(dim=1)
+        sum_mask = mask.sum(dim=1).clamp(min=1e-9)
+        T_f = sum_hidden / sum_mask
     
         # Joint multimodal embedding [n, d_e]
         # I_e = l2_normalize(np.dot(I_f, W_i), axis=1)
